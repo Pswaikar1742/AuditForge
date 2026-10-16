@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Shield, AlertTriangle, CheckCircle, Flame, Lock, Terminal,
+  Shield, ShieldAlert, AlertTriangle, CheckCircle, Flame, Lock, Terminal,
   RefreshCw, Database, Layers, Search, ExternalLink, ChevronRight,
   ChevronDown, Cpu, FileCode, Radio, Zap, ArrowRight, Github, Play, Check
 } from 'lucide-react';
