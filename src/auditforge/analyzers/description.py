@@ -89,6 +89,13 @@ def triage_match(text, match, rule_id):
     return 'SUSPICIOUS'
 
 
+from auditforge.analyzers.providers import (
+    InferenceProvider,
+    get_inference_provider,
+    DisabledProvider,
+)
+
+
 class DescriptionAnalyzer:
     """Analyzes tool descriptions for prompt injection, hidden directives, and scope poisoning."""
 
@@ -98,6 +105,7 @@ class DescriptionAnalyzer:
         model_name: Optional[str] = None,
         ollama_host: Optional[str] = None,
         timeout_seconds: Optional[float] = None,
+        provider: Optional[InferenceProvider] = None,
     ):
         self.use_llm = use_llm
         self.model_name = model_name or config.OLLAMA_MODEL
@@ -106,6 +114,16 @@ class DescriptionAnalyzer:
         if not math.isfinite(requested_timeout) or requested_timeout <= 0:
             raise ValueError("semantic timeout must be finite and positive")
         self.timeout_seconds = min(float(requested_timeout), 30.0)
+
+        if not self.use_llm:
+            self.provider = DisabledProvider()
+        elif provider is not None:
+            self.provider = provider
+        else:
+            self.provider = get_inference_provider(
+                host_or_url=self.ollama_host,
+                model_name=self.model_name,
+            )
 
     def _coverage(self, tool, triage, reason, status="PASS", source="description_coverage"):
         data = {"triage": triage, "status": status, "reason": reason,
