@@ -564,14 +564,6 @@ class KoalaAuditRequest(BaseModel):
 def get_model_assurance() -> Dict[str, Any]:
     """Retrieve model governance assurance report powered by KOALA (DomAiyn Labs)."""
     runner = KoalaAssuranceRunner()
-    report_file = Path("/tmp/koala_report.json")
-    if report_file.exists():
-        try:
-            report = runner.load_report(str(report_file))
-            return report.model_dump()
-        except Exception:
-            pass
-    # If report not pre-generated, execute fresh audit
     try:
         report = runner.run_audit()
         return report.model_dump()

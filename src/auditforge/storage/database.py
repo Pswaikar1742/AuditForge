@@ -230,13 +230,26 @@ class Database:
             return results
 
     def list_baselines(self) -> List[Dict[str, Any]]:
-        """List all pinned baselines."""
+        """List all pinned baselines with complete field aliases."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT server_id as server_name, catalog_fingerprint as catalog_hash, 'APPROVED' as trust_state, 'admin' as approved_by, created_at as approved_at, snapshot_json FROM baselines ORDER BY created_at DESC"
+                "SELECT server_id, server_id as server_name, catalog_fingerprint, catalog_fingerprint as catalog_hash, 'APPROVED' as trust_state, 'admin' as approved_by, created_at, created_at as approved_at, created_at as timestamp, snapshot_json FROM baselines ORDER BY created_at DESC"
             )
-            return [dict(r) for r in cursor.fetchall()]
+            rows = cursor.fetchall()
+            results = []
+            for r in rows:
+                item = dict(r)
+                if item.get("snapshot_json"):
+                    try:
+                        snap = json.loads(item["snapshot_json"])
+                        item["tool_count"] = len(snap.get("tools", {}))
+                    except Exception:
+                        item["tool_count"] = 0
+                else:
+                    item["tool_count"] = 0
+                results.append(item)
+            return results
 
     def get_stats(self) -> Dict[str, Any]:
         """Aggregate security statistics."""

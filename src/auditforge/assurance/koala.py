@@ -111,8 +111,10 @@ class KoalaAssuranceRunner:
             target_runtime: Runtime target like 'ollama:qwen2.5-coder:7b'.
         """
         target_dir = Path(model_dir) if model_dir else self.DEFAULT_MODEL_DIR
-        out_path = Path(output_file) if output_file else Path("/tmp/koala_report.json")
-        fws = ",".join(frameworks or ["nist_ai_rmf", "eu_ai_act"])
+        fws_list = sorted(frameworks) if frameworks else ["eu_ai_act", "nist_ai_rmf"]
+        fws_tag = "_".join(fws_list)
+        out_path = Path(output_file) if output_file else Path(f"/tmp/koala_report_{fws_tag}.json")
+        fws = ",".join(fws_list)
 
         cmd = [
             self.python_bin,

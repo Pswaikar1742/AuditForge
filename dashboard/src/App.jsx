@@ -248,6 +248,12 @@ export default function App() {
   const approveBaseline = async (serverName) => {
     try {
       const isVulnerable = ['rogue_server', 'poisoned_description', 'lying_annotations'].includes(serverName);
+      if (isVulnerable) {
+        const proceed = window.confirm(
+          `WARNING: '${serverName}' is flagged as a KNOWN VULNERABLE fixture. Forcing baseline approval will record known security flaws as accepted behavior. Are you sure you want to proceed?`
+        );
+        if (!proceed) return;
+      }
       const res = await fetch(`${API_BASE}/api/baselines/${serverName}/approve`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -316,7 +322,7 @@ export default function App() {
 
   const getStageStatus = (stage, scan) => {
     if (!scan) return 'IDLE';
-    if (stage.key === 'catalog_discovery') return scan.stage_coverage?.catalog_discovery || 'PASS';
+    if (stage.key === 'catalog_discovery') return scan.stage_coverage?.catalog_discovery || 'UNKNOWN';
     if (stage.key === 'static_ast') return scan.stage_coverage?.static_ast || 'SKIPPED';
     if (stage.key === 'description_intelligence') return scan.stage_coverage?.description_intelligence || 'SKIPPED';
     if (stage.key === 'dynamic_probing') return scan.stage_coverage?.dynamic_probing || 'SKIPPED';
@@ -1145,36 +1151,42 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {baselines.map((b) => (
-                    <tr key={b.server_id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                      <td style={{ padding: '0.75rem', fontWeight: '700', color: '#F8FAFC' }}>
-                        {b.server_id}
-                      </td>
-                      <td style={{ padding: '0.75rem', fontFamily: 'monospace', fontSize: '0.8rem', color: '#38BDF8' }}>
-                        {b.catalog_fingerprint}
-                      </td>
-                      <td style={{ padding: '0.75rem' }}>
-                        {b.tool_count || (b.tools ? Object.keys(b.tools).length : '-')}
-                      </td>
-                      <td style={{ padding: '0.75rem', color: 'var(--text-muted)' }}>
-                        {b.timestamp ? new Date(b.timestamp).toLocaleString() : 'N/A'}
-                      </td>
-                      <td style={{ padding: '0.75rem' }}>
-                        <button
-                          className="btn btn-secondary"
-                          onClick={() => {
-                            setTargetName(b.server_id);
-                            setCustomPath(`fixtures/${b.server_id}`);
-                            setActiveTab('scanner');
-                            runDiff(b.server_id, `fixtures/${b.server_id}`);
-                          }}
-                          style={{ padding: '0.25rem 0.6rem', fontSize: '0.75rem' }}
-                        >
-                          Check Drift
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {baselines.map((b, idx) => {
+                    const sid = b.server_id || b.server_name || `baseline-${idx}`;
+                    const fp = b.catalog_fingerprint || b.catalog_hash || 'UNKNOWN';
+                    const ts = b.timestamp || b.approved_at || b.created_at;
+                    const toolsCount = b.tool_count !== undefined ? b.tool_count : (b.tools ? Object.keys(b.tools).length : '-');
+                    return (
+                      <tr key={sid} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                        <td style={{ padding: '0.75rem', fontWeight: '700', color: '#F8FAFC' }}>
+                          {sid}
+                        </td>
+                        <td style={{ padding: '0.75rem', fontFamily: 'monospace', fontSize: '0.8rem', color: '#38BDF8' }}>
+                          {fp}
+                        </td>
+                        <td style={{ padding: '0.75rem' }}>
+                          {toolsCount}
+                        </td>
+                        <td style={{ padding: '0.75rem', color: 'var(--text-muted)' }}>
+                          {ts ? new Date(ts).toLocaleString() : 'N/A'}
+                        </td>
+                        <td style={{ padding: '0.75rem' }}>
+                          <button
+                            className="btn btn-secondary"
+                            onClick={() => {
+                              setTargetName(sid);
+                              setCustomPath(`fixtures/${sid}`);
+                              setActiveTab('scanner');
+                              runDiff(sid, `fixtures/${sid}`);
+                            }}
+                            style={{ padding: '0.25rem 0.6rem', fontSize: '0.75rem' }}
+                          >
+                            Check Drift
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
