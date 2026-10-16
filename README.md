@@ -1,141 +1,107 @@
-# 🛡️ AUDITFORGE — Evidence-First MCP Security Auditor
+# AuditForge — Evidence-First MCP Security Auditor
 
-[![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.12-blue.svg)](https://www.python.org/)
-[![MCP SDK](https://img.shields.io/badge/MCP%20SDK-v2-green.svg)](https://modelcontextprotocol.io/)
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Track](https://img.shields.io/badge/OpenForge-Track%201%20Open%20Weight%20AI-orange.svg)](https://github.com/Pswaikar1742/AuditForge)
+[![CI](https://github.com/Pswaikar1742/AuditForge/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Pswaikar1742/AuditForge/actions/workflows/ci.yml)
 
-> **"Don't trust the label. Audit the behavior."**  
-> *Team InnoVision | OpenForge Hackathon 2026 | Problem Statement PS02: MCP Server Security Auditor*
+> **Don't trust the label. Audit the behavior.**
 
----
+**Team InnoVision · OpenForge Hackathon 2026 · PS02: MCP Server Security Auditor**
 
-## 📌 Problem & Vision
+AuditForge audits Model Context Protocol (MCP) servers by comparing claimed tool capabilities with static source evidence, protocol-discovered metadata, selected runtime observations and approved catalog baselines. It reports findings with evidence references, stage coverage and machine-readable reports. An inconclusive or skipped check is **not** proof of safety.
 
-Model Context Protocol (MCP) servers act as bridge layers between Large Language Models and host system tools, APIs, and databases. However, existing MCP deployments rely almost entirely on blind faith in tool names, docstrings, and claimed metadata annotations.
+## What's implemented
 
-**AuditForge** is an open-source, evidence-first security auditor for MCP servers that systematically reconciles **claimed contracts** against **observed runtime and static behavior**.
+| Capability | Current implementation |
+| --- | --- |
+| MCP discovery | Official Python MCP SDK and controlled local stdio fixtures |
+| Static analysis | Python AST, Bandit and contract-to-behavior trust-gap checks |
+| Description security | Normalization, heuristic/contextual triage and optional bounded Ollama/OpenAI-compatible inference |
+| Dynamic probing | Restricted Docker-based probing of supported local targets |
+| Catalog integrity | Versioned SHA-256 fingerprints for tools, resources and prompts; approved baselines and live rug-pull comparison |
+| Evidence and reports | Linked evidence records, SHA-256 integrity **checksum**, JSON and Markdown reports; a checksum is not an external tamper-proof signature |
+| Dashboard | React/Vite Guided Demo and Advanced Audit, target catalog, comparisons, Evidence Vault and reports |
+| Security intelligence (RAG-style retrieval) | Four curated local knowledge documents, in-memory BM25 lexical retrieval and evidence-grounded explanations; **not** a pgvector/embedding implementation |
+| Asynchronous jobs | Redis-backed queue option with in-memory development fallback, job API and dashboard monitor |
+| Persistence | SQLite standalone default, optional SQLAlchemy-backed PostgreSQL path |
+| Benchmarks | AttackLab synthetic 100K-item deterministic evaluation; **not** 100K live/concurrent MCP scans |
+| Model assurance | Separate KOALA governance audit integration; not an MCP security certification |
 
-```text
-┌────────────────────────────────────────────────────────────────────────┐
-│                              AUDITFORGE                                │
-│                                                                        │
-│  ┌──────────────┐   ┌───────────────┐   ┌───────────────────────────┐  │
-│  │  CLI (Typer) │   │ React / Vite  │   │  Evidence Reports Engine  │  │
-│  │   + Rich     │   │   Dashboard   │   │  JSON Capsules & Markdown │  │
-│  └──────┬───────┘   └───────┬───────┘   └─────────────┬─────────────┘  │
-│         │                   │                         │                │
-│         └───────────┬───────┴─────────────────────────┘                │
-│                     ▼                                                  │
-│  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │                      Audit Orchestrator                          │  │
-│  │  scan() → catalog → static → desc → prober → trust gap → report  │  │
-│  └──────────┬───────────┬───────────┬───────────┬───────────────────┘  │
-│             │           │           │           │                      │
-│      ┌──────▼─────┐ ┌───▼────┐  ┌───▼────┐  ┌───▼─────┐                │
-│      │ MCP Client │ │ Static │  │ Desc   │  │ Dynamic │                │
-│      │ Discovery  │ │ AST +  │  │ Layer  │  │ Docker  │                │
-│      │ & Pinning  │ │ Bandit │  │ 0+1+2  │  │ Sandbox │                │
-│      └────────────┘ └────────┘  └────────┘  └─────────┘                │
-│                                                                        │
-│  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │                      SQLite & Cryptographic Store                │  │
-│  │  SHA-256 Canonical Fingerprints | Verifiable Evidence Capsules   │  │
-│  └──────────────────────────────────────────────────────────────────┘  │
-└────────────────────────────────────────────────────────────────────────┘
-```
+## Quickstart — local SQLite demo
 
----
-
-## 🚀 Key Architectural Pillars
-
-1. **Protocol Discovery & Canonical Normalization:** Connects via MCP stdio transport, normalizes JSON schemas, and computes deterministic SHA-256 fingerprints for tools and catalogs.
-2. **Static AST & Bandit Analysis:** Deep AST inspection for dangerous calls (`os.system`, `subprocess`, file mutations, socket connections, credential access).
-3. **Open-Weight Description Intelligence:** Layer 0 deterministic heuristic screening combined with Layer 1 & 2 semantic analysis via local **Qwen3.5:9b** / **Llama3.2** through Ollama.
-4. **Isolated Container Probing:** Ephemeral Docker sandbox execution with non-root security, memory limits (256MB), CPU quotas, disabled network (`none`), and guest telemetry.
-5. **Contract-to-Behavior Trust Gap Analysis:** Identifies discrepancies when a tool claimed to be `readOnly=True` or benign performs writes or network calls.
-6. **Catalog Pinning & Rug Pull Alerts:** Detects unauthorized post-deployment changes, newly injected tools, or poisoned descriptions across versions.
-7. **Verifiable Evidence Capsules:** Every finding includes exact code lines, LLM quotes, or container telemetry logs.
-
----
-
-## 💻 Tech Stack
-
-| Component | Technology | Rationale |
-|---|---|---|
-| **Backend Runtime** | Python 3.12 | Optimal performance and full MCP SDK v2 compatibility |
-| **MCP Integration** | Official MCP Python SDK (`mcp>=2.0.0`) | Standards compliance for stdio client and tool schemas |
-| **CLI** | Typer + Rich | Formatted terminal diagnostics, tables, and progress bars |
-| **Static Analysis** | Python `ast` + Bandit | AST node visitor for shell injection, file writes, and secrets |
-| **Open-Weight AI** | Qwen3.5:9b / Llama3.2 via Ollama | Zero proprietary API dependence; 100% local inference |
-| **Sandbox Isolation** | Docker (`auditforge-probe:latest`) | Namespace isolation, resource limits, and network isolation |
-| **Guest Telemetry** | Python Audit Hooks (`sys.addaudithook`) | In-container telemetry for file and socket events |
-| **Storage & Hashing**| SQLite + SHA-256 | Canonical JSON serialization and local persistence |
-| **API** | FastAPI + Uvicorn | REST API for dashboard integration and CI pipelines |
-| **Dashboard** | React + Vite + Tailwind/Lucide | Real-time scan monitoring and evidence capsule inspection |
-| **Tests** | pytest | Deterministic unit and integration test suite |
-
----
-
-## ⚡ Quickstart
-
-### 1. Installation
+Requires Python **3.11 or 3.12**, Node.js/npm and the project dependencies. Docker is needed for supported dynamic probes; Ollama is optional.
 
 ```bash
-# Clone the repository
 git clone https://github.com/Pswaikar1742/AuditForge.git
 cd AuditForge
-
-# Create and activate virtual environment
-uv venv --python /home/psw/.local/bin/python3.12 .venv
+python3 -m venv .venv
 source .venv/bin/activate
-
-# Install editable package with dev dependencies
-uv pip install -e ".[dev]"
+python -m pip install -e '.[dev,prod]'
+npm --prefix dashboard ci
 ```
 
-### 2. Run Diagnostics & Health Check
+Start the backend (terminal 1):
 
 ```bash
-# Run system doctor
-python -m auditforge.cli doctor
+.venv/bin/python -m uvicorn auditforge.api.app:app --host 127.0.0.1 --port 8000
 ```
 
-### 3. Run Unit Tests
+Start the frontend (terminal 2):
 
 ```bash
-python -m pytest tests/unit/ -v
+npm --prefix dashboard run dev -- --host 127.0.0.1 --port 5173 --strictPort
 ```
 
-### 4. Catalog Pinning & Diff Example
+Open **http://127.0.0.1:5173/**. API health: **http://127.0.0.1:8000/api/health**; API docs: **http://127.0.0.1:8000/docs**. Check that the header shows **API Connected** before running a demo.
+
+Or use `bash run.sh` in a trusted local terminal; **caution:** the current script uses `fuser -k` on ports 8000 and 5173, terminating processes on those ports. Use the manual commands above when you need to preserve other services.
+
+### Audit and demo commands
 
 ```bash
-# Pin an approved baseline
-python -m auditforge.cli pin fixtures/clean_reader/catalog.json --id clean_reader
-
-# Compare against a modified rug-pull catalog
-python -m auditforge.cli diff fixtures/rug_pull/catalog_v2.json --id clean_reader
+PYTHONPATH=src .venv/bin/python -m auditforge.cli doctor
+PYTHONPATH=src .venv/bin/python -m auditforge.cli scan fixtures/rogue_server/ --no-llm
+PYTHONPATH=src .venv/bin/python -m auditforge.cli scan fixtures/clean_reader/ --no-llm
+PYTHONPATH=src .venv/bin/python -m auditforge.cli demo
 ```
 
----
+The CLI `demo` command recreates the separate `auditforge_demo.db`; back up that file if you have data to retain. The regular scan uses the configured database. Keep external/untrusted MCP command execution disabled until isolated discovery and execution are fully validated.
 
-## 👥 Parallel Workstream Branches & Worktrees
+Run tests:
 
-Development is partitioned across dedicated branches and worktrees to avoid conflicts:
+```bash
+.venv/bin/python -m pytest tests/unit/ -q
+.venv/bin/python -m pytest tests/integration/ tests/benchmarks/ -q
+npm --prefix dashboard run build
+```
 
-- `feat/mcp-catalog-pinning` (`../auditforge-mcp`): MCP stdio client discovery & catalog pinning.
-- `feat/static-description-llm` (`../auditforge-analysis`): Static AST scanning & Qwen prompt injection detection.
-- `feat/sandbox-prober-fixtures` (`../auditforge-sandbox`): Docker sandbox runner & test fixtures.
-- `feat/report-api-ui` (`../auditforge-ui`): FastAPI REST service & React/Vite dashboard.
-- `develop`: Integration branch where tested feature PRs merge.
-- `main`: Release branch for tested hackathon submissions.
+Some integration checks require local Docker, Ollama or KOALA setup. CI currently runs deterministic unit tests for Python 3.11 and 3.12; passing CI is not a guarantee of full-system deployment readiness.
 
-See [`docs/WORKSTREAMS.md`](file:///run/media/psw/6066FD4C66FD2406/Projects/Auditforge/Forger/docs/WORKSTREAMS.md) for full coordination rules.
+## Optional distributed services
 
----
+`DATABASE_URL` selects the SQLAlchemy/PostgreSQL path; absent it, SQLite remains the standalone default. `REDIS_URL` configures the optional broker, with a development in-memory fallback. `AUDITFORGE_INFERENCE_PROVIDER` selects `ollama`, `openai_compatible` or `disabled`. See [`.env.example`](.env.example) and [the production architecture design](docs/PRODUCTION_ARCHITECTURE.md).
 
-## 📄 License & Attribution
+`docker-compose.yml` is a development **blueprint**, not a verified turnkey deployment: service Dockerfile paths and secrets/network permissions must be reviewed and completed before running it. Never use sample DB passwords or mount the Docker socket in an untrusted deployment.
 
-- Released under the [Apache 2.0 License](LICENSE).
-- Developed by **Team InnoVision** for OpenForge Hackathon 2026.
-- Pre-event exploratory research and architecture plans disclosed per event rules. All core competition commits and workstreams are tracked with authentic git provenance.
+## Current scope and limitations
+
+- The target catalog has **8 executable team-controlled local fixtures** and **8 source-only benchmark representatives**. The latter do not execute their original upstream repositories.
+- The AttackLab 100K measurements cover deterministic description analysis on synthetic data, not concurrent live MCP audits. See [AttackLab methodology](docs/ATTACKLAB.md) and [detection limitations](docs/ATTACKLAB_DETECTION_GAPS.md).
+- Hardening improved the published regression examples, but independent small-set recall remains limited. See [detection hardening](docs/DETECTION_HARDENING.md).
+- Security intelligence currently uses curated **BM25 lexical retrieval**; embedding/vector indexing, externally verified ingestion and larger-scale retrieval evaluation are not yet demonstrated.
+- Production-level authentication, tenancy, host isolation for arbitrary third-party MCP servers, queue recovery guarantees and end-to-end scalability require additional security testing.
+- KOALA reports governance checks separately from MCP tool safety and cannot by themselves certify regulatory compliance.
+
+## Documentation
+
+- [Release inventory and verification checklist](docs/RELEASE_STATUS.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Production architecture proposal](docs/PRODUCTION_ARCHITECTURE.md)
+- [API contracts](docs/API_CONTRACT.md)
+- [Security and limits](docs/SECURITY.md)
+- [Development](docs/DEVELOPMENT.md)
+- [AttackLab benchmarks](docs/ATTACKLAB.md)
+- [Detection hardening](docs/DETECTION_HARDENING.md)
+- [Contribution guide](CONTRIBUTING.md)
+
+## License
+
+Apache-2.0. Developed by **Team InnoVision** for OpenForge Hackathon 2026.
