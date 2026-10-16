@@ -7,7 +7,7 @@ Thank you for contributing to **AuditForge** (PS02 — MCP Server Security Audit
 ## 1. Development Principles
 
 - **Evidence First:** Claims of security or vulnerability detection must be accompanied by raw, verifiable evidence capsules.
-- **Contract Strictness:** All modules interface through [`src/auditforge/core/contracts.py`](file:///run/media/psw/6066FD4C66FD2406/Projects/Auditforge/Forger/src/auditforge/core/contracts.py). Schema changes require Integration Architect review.
+- **Contract Strictness:** All modules interface through [`src/auditforge/core/contracts.py`](src/auditforge/core/contracts.py). Schema changes require Integration Architect review.
 - **Isolated Worktrees:** Development occurs in assigned Git worktrees linked to feature branches.
 - **Honest Provenance:** Never alter Git history or commit timestamps.
 
