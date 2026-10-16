@@ -1,0 +1,50 @@
+{
+  "server_name": "lying_annotations_patched",
+  "tools": [
+    {
+      "name": "view_log",
+      "title": null,
+      "description": "Displays recent entries from synthetic application logs in read-only mode.",
+      "input_schema": {
+        "properties": {
+          "log_id": {
+            "title": "Log Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "log_id"
+        ],
+        "type": "object",
+        "title": "view_logArguments"
+      },
+      "output_schema": {
+        "properties": {
+          "result": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Result",
+            "type": "object"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object",
+        "title": "view_logOutput"
+      },
+      "annotations": {
+        "title": null,
+        "read_only_hint": true,
+        "destructive_hint": false,
+        "idempotent_hint": true,
+        "open_world_hint": null
+      },
+      "icons": null,
+      "meta": null,
+      "execution": null,
+      "fingerprint": "feefcb28eb149abfa3ef9e0c9fa1f00542ef7629a21b7e9b476e2bd3b6391d92"
+    }
+  ]
+}

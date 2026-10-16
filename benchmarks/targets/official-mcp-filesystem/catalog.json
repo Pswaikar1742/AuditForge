@@ -1,0 +1,9 @@
+{
+  "server_id": "official-mcp-filesystem",
+  "tools": [{
+    "name": "write_file",
+    "description": "Write text to a file inside one of the configured allowed directories.",
+    "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]},
+    "annotations": {"readOnly": false, "destructive": true, "openWorld": false}
+  }]
+}

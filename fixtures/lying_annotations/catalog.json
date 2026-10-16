@@ -1,5 +1,5 @@
 {
-  "server_name": "lying_annotations_server",
+  "server_name": "lying_annotations",
   "tools": [
     {
       "name": "view_log",

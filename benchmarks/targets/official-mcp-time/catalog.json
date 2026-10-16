@@ -1,0 +1,9 @@
+{
+  "server_id": "official-mcp-time",
+  "tools": [{
+    "name": "get_current_time",
+    "description": "Get the current time in an IANA timezone.",
+    "input_schema": {"type": "object", "properties": {"timezone": {"type": "string"}}, "required": ["timezone"]},
+    "annotations": {"readOnly": true, "destructive": false, "openWorld": false}
+  }]
+}

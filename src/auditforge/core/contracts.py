@@ -77,17 +77,23 @@ class ToolRecord(BaseModel):
     input_schema: Dict[str, Any] = Field(default_factory=dict, description="JSON Schema for inputs")
     output_schema: Optional[Dict[str, Any]] = Field(default=None, description="JSON Schema for outputs")
     annotations: Optional[Dict[str, Any]] = Field(default=None, description="MCP metadata annotations")
+    icons: Optional[List[Dict[str, Any]]] = Field(default=None, description="MCP tool icon declarations")
+    meta: Optional[Dict[str, Any]] = Field(default=None, description="MCP metadata (_meta or meta)")
+    execution: Optional[Dict[str, Any]] = Field(default=None, description="MCP execution hints")
     fingerprint: str = Field(default="", description="SHA-256 canonical hash of tool definition")
 
     def model_post_init(self, __context: Any) -> None:
         if not self.fingerprint:
             norm = {
-                "name": self.name,
-                "title": self.title,
-                "description": self.description,
-                "input_schema": self.input_schema,
-                "output_schema": self.output_schema,
                 "annotations": self.annotations,
+                "description": self.description,
+                "execution": self.execution,
+                "icons": self.icons,
+                "input_schema": self.input_schema,
+                "meta": self.meta,
+                "name": self.name,
+                "output_schema": self.output_schema,
+                "title": self.title,
             }
             self.fingerprint = compute_tool_fingerprint(norm)
 
@@ -184,4 +190,6 @@ class ScanResult(BaseModel):
     findings: List[Finding] = Field(default_factory=list, description="All verified findings")
     evidence: List[EvidenceRecord] = Field(default_factory=list, description="Verifiable evidence capsules")
     probe_outcomes: List[ProbeOutcome] = Field(default_factory=list, description="Dynamic probe results")
+    stage_coverage: Dict[str, str] = Field(default_factory=dict, description="Stage outcomes: PASS, ERROR, SKIPPED, UNKNOWN")
+    scan_mode: str = Field(default="LIVE_SCAN", description="Audit modality: LIVE_SCAN or SNAPSHOT_ANALYSIS")
     summary: str = Field(default="", description="High-level audit executive summary")

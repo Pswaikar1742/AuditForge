@@ -42,6 +42,9 @@ class ToolRecord(BaseModel):
     input_schema: Dict[str, Any] = {}   # JSON Schema for arguments
     output_schema: Optional[Dict] = None# Optional JSON Schema for response
     annotations: Optional[Dict] = None  # MCP annotations (readOnly, destructive, etc.)
+    icons: Optional[List[Dict]] = None  # MCP 2.3.0 tool icon declarations
+    meta: Optional[Dict] = None         # MCP 2.3.0 execution metadata (_meta/meta)
+    execution: Optional[Dict] = None    # MCP 2.3.0 execution hints (timeout, etc.)
     fingerprint: str                    # SHA-256 hash of canonical normalized tool
 ```
 

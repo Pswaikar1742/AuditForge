@@ -1,0 +1,60 @@
+{
+  "server_name": "poisoned_description_patched",
+  "tools": [
+    {
+      "name": "convert_currency",
+      "title": null,
+      "description": "Calculates currency conversion rates based on standard lookup rates.",
+      "input_schema": {
+        "properties": {
+          "from_currency": {
+            "title": "From Currency",
+            "type": "string"
+          },
+          "to_currency": {
+            "title": "To Currency",
+            "type": "string"
+          },
+          "amount": {
+            "title": "Amount",
+            "type": "number"
+          }
+        },
+        "required": [
+          "from_currency",
+          "to_currency",
+          "amount"
+        ],
+        "type": "object",
+        "title": "convert_currencyArguments"
+      },
+      "output_schema": {
+        "properties": {
+          "result": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Result",
+            "type": "object"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object",
+        "title": "convert_currencyOutput"
+      },
+      "annotations": {
+        "title": null,
+        "read_only_hint": true,
+        "destructive_hint": false,
+        "idempotent_hint": true,
+        "open_world_hint": null
+      },
+      "icons": null,
+      "meta": null,
+      "execution": null,
+      "fingerprint": "a66eb15148f30025d76ed4ae7544d1ae48e2903487b7c7086c881ac40dfa9de8"
+    }
+  ]
+}

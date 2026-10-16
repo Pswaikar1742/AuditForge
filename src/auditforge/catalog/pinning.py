@@ -23,21 +23,20 @@ def diff_catalogs(baseline: ServerSnapshot, current: ServerSnapshot) -> CatalogD
 
         if b_tool.fingerprint != c_tool.fingerprint:
             field_diffs: Dict[str, Any] = {}
-            if b_tool.description != c_tool.description:
-                field_diffs["description"] = {
-                    "baseline": b_tool.description,
-                    "current": c_tool.description,
-                }
-            if b_tool.input_schema != c_tool.input_schema:
-                field_diffs["input_schema"] = {
-                    "baseline": b_tool.input_schema,
-                    "current": c_tool.input_schema,
-                }
-            if b_tool.annotations != c_tool.annotations:
-                field_diffs["annotations"] = {
-                    "baseline": b_tool.annotations,
-                    "current": c_tool.annotations,
-                }
+            for field in (
+                "name",
+                "title",
+                "description",
+                "input_schema",
+                "output_schema",
+                "annotations",
+                "icons",
+                "meta",
+                "execution",
+            ):
+                before, after = getattr(b_tool, field), getattr(c_tool, field)
+                if before != after:
+                    field_diffs[field] = {"baseline": before, "current": after}
             if not field_diffs:
                 field_diffs["fingerprint"] = {
                     "baseline": b_tool.fingerprint,

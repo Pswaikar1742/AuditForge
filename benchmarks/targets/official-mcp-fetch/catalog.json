@@ -1,0 +1,9 @@
+{
+  "server_id": "official-mcp-fetch",
+  "tools": [{
+    "name": "fetch",
+    "description": "Fetch and convert the contents of a URL to readable text. Network access is the declared capability.",
+    "input_schema": {"type": "object", "properties": {"url": {"type": "string", "format": "uri"}}, "required": ["url"]},
+    "annotations": {"readOnly": true, "destructive": false, "openWorld": true}
+  }]
+}

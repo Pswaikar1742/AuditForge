@@ -6,8 +6,7 @@ provide security isolation on their own. Host isolation is enforced by Docker.
 """
 
 from typing import Any, Callable, Dict, List
-from auditforge.core.contracts import EvidenceRecord
-from auditforge.core.errors import NotImplementedAuditError
+import sys
 
 
 class AuditHookTelemetry:
@@ -18,14 +17,11 @@ class AuditHookTelemetry:
 
     def start_capture(self) -> None:
         """Start capturing audit events in guest environment."""
-        raise NotImplementedAuditError(
-            "Guest audit hook telemetry is not yet implemented. "
-            "Assigned to workstream: feat/sandbox-prober-fixtures."
-        )
+        def hook(event: str, args: tuple) -> None:
+            if event in {"open", "socket.connect", "subprocess.Popen"}:
+                self.events.append({"event": event, "args": [repr(value)[:500] for value in args]})
+        sys.addaudithook(hook)
 
     def stop_capture(self) -> List[Dict[str, Any]]:
         """Stop capturing and return recorded event list."""
-        raise NotImplementedAuditError(
-            "Guest audit hook telemetry is not yet implemented. "
-            "Assigned to workstream: feat/sandbox-prober-fixtures."
-        )
+        return list(self.events)

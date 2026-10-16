@@ -84,3 +84,34 @@ def test_database_baseline_and_scan_storage(tmp_path):
     assert loaded_baseline is not None
     assert loaded_baseline.catalog_fingerprint == snapshot.catalog_fingerprint
     assert "reader" in loaded_baseline.tools
+
+
+def test_tool_record_mcp_extended_fields():
+    """Verify ToolRecord includes icons, meta, and execution in fingerprint computation."""
+    base_dict = {
+        "annotations": None,
+        "description": "Reads data",
+        "execution": None,
+        "icons": None,
+        "input_schema": {"type": "object"},
+        "meta": None,
+        "name": "data_reader",
+        "output_schema": None,
+        "title": None,
+    }
+    t_base = ToolRecord(**base_dict)
+
+    with_meta = dict(base_dict, meta={"sandbox": "strict"})
+    t_meta = ToolRecord(**with_meta)
+
+    with_exec = dict(base_dict, execution={"timeout": 30})
+    t_exec = ToolRecord(**with_exec)
+
+    with_icons = dict(base_dict, icons=[{"uri": "https://example.com/icon.png"}])
+    t_icons = ToolRecord(**with_icons)
+
+    assert t_base.fingerprint != t_meta.fingerprint
+    assert t_base.fingerprint != t_exec.fingerprint
+    assert t_base.fingerprint != t_icons.fingerprint
+    assert t_meta.fingerprint != t_exec.fingerprint
+
