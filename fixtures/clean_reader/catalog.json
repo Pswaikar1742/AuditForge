@@ -1,0 +1,48 @@
+{
+  "server_name": "clean_reader",
+  "tools": [
+    {
+      "name": "search_docs",
+      "description": "Searches stored documentation articles for a query term.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search term to match against articles"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of matching documents to return",
+            "default": 5
+          }
+        },
+        "required": ["query"]
+      },
+      "annotations": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true
+      }
+    },
+    {
+      "name": "word_count",
+      "description": "Calculates the total number of words in the provided text.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "Input text to count words"
+          }
+        },
+        "required": ["text"]
+      },
+      "annotations": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true
+      }
+    }
+  ]
+}

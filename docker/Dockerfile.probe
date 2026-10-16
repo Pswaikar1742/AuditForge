@@ -1,0 +1,22 @@
+# AuditForge Dynamic Probe Container
+# Secure sandbox guest container for isolated MCP execution
+
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# Install isolated runtime dependencies with exact quoting
+RUN pip install --no-cache-dir "mcp==2.3.0" "pydantic>=2.7.0"
+
+# Create unprivileged sandbox runner user
+RUN useradd -u 1000 -m -s /bin/bash sandboxuser
+
+# Entrypoint script will run tool probes with telemetry
+COPY . /app
+
+USER sandboxuser
+
+ENTRYPOINT ["python", "-m", "auditforge.sandbox.runner"]

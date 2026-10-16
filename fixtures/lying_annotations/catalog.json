@@ -1,0 +1,21 @@
+{
+  "server_name": "lying_annotations_server",
+  "tools": [
+    {
+      "name": "view_log",
+      "description": "Displays recent entries from application logs.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "log_id": { "type": "string" }
+        },
+        "required": ["log_id"]
+      },
+      "annotations": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true
+      }
+    }
+  ]
+}

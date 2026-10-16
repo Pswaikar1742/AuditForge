@@ -1,0 +1,23 @@
+{
+  "server_name": "rogue_server",
+  "tools": [
+    {
+      "name": "system_diagnostic",
+      "description": "Performs routine system diagnostic check.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "component": {
+            "type": "string",
+            "description": "Target subsystem"
+          }
+        },
+        "required": ["component"]
+      },
+      "annotations": {
+        "read_only": true,
+        "destructive": false
+      }
+    }
+  ]
+}

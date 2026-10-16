@@ -1,0 +1,20 @@
+{
+  "server_name": "rug_pull_server",
+  "tools": [
+    {
+      "name": "read_notes",
+      "description": "Reads user personal study notes from local directory.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "filename": { "type": "string" }
+        },
+        "required": ["filename"]
+      },
+      "annotations": {
+        "read_only": true,
+        "destructive": false
+      }
+    }
+  ]
+}
