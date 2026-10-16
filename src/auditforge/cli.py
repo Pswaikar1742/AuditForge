@@ -226,7 +226,10 @@ def demo():
     """Execute complete 5-stage judge-ready demonstration."""
     console.print(Panel.fit("[bold cyan]AuditForge — Master 5-Stage Live Demonstration[/bold cyan]", border_style="cyan"))
 
-    orchestrator = ScanOrchestrator(use_docker=True, use_llm=False)
+    orchestrator = ScanOrchestrator(use_docker=True, use_llm=True)
+    db = Database(config.DB_PATH)
+    with db._get_connection() as conn:
+        conn.execute("DELETE FROM baselines WHERE server_id = 'clean_reader'")
 
     # Stage 1: Clean MCP baseline
     console.print("\n[bold green]═══ STAGE 1: Clean Baseline Server (Negative Control) ═══[/bold green]")

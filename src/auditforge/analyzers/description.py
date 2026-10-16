@@ -140,7 +140,12 @@ class DescriptionAnalyzer:
             )
             with urllib.request.urlopen(req, timeout=self.timeout_seconds) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
-                raw_response = data.get("response", "{}")
+                raw_response = data.get("response", "").strip()
+                if not raw_response and "thinking" in data:
+                    raw_response = data.get("thinking", "").strip()
+                if raw_response.startswith("```"):
+                    raw_response = re.sub(r"^```(?:json)?\s*", "", raw_response)
+                    raw_response = re.sub(r"\s*```$", "", raw_response)
                 parsed = json.loads(raw_response)
 
                 if parsed.get("is_suspicious"):
