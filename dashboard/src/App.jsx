@@ -17,7 +17,10 @@ export default function App() {
   const [expandedFinding, setExpandedFinding] = useState(null);
   const [loading, setLoading] = useState(false);
   const [statusMsg, setStatusMsg] = useState('');
-  const [customPath, setCustomPath] = useState('');
+  const [customPath, setCustomPath] = useState('fixtures/lying_annotations');
+  const [targetName, setTargetName] = useState('lying_annotations');
+  const [useLlm, setUseLlm] = useState(false);
+  const [diffResult, setDiffResult] = useState(null);
   const [apiOnline, setApiOnline] = useState(false);
   const [severityFilter, setSeverityFilter] = useState('ALL');
 
@@ -96,7 +99,7 @@ export default function App() {
 
   const runScan = async (path, name) => {
     setLoading(true);
-    setStatusMsg(`Running security audit on ${name || path}...`);
+    setStatusMsg(`Running security audit on ${name || path}${useLlm ? ' (with Qwen AI heuristics)' : ''}...`);
     try {
       const res = await fetch(`${API_BASE}/api/scan`, {
         method: 'POST',
@@ -104,12 +107,13 @@ export default function App() {
         body: JSON.stringify({
           server_path: path,
           server_name: name,
+          use_llm: useLlm,
         }),
       });
       if (res.ok) {
         const result = await res.json();
         setSelectedScan(result);
-        setStatusMsg(`Scan completed: ${result.findings?.length || 0} finding(s) detected.`);
+        setStatusMsg(`Scan completed for '${name || path}': ${result.findings?.length || 0} finding(s) detected. Trust state: ${result.trust_state}`);
         fetchStats();
         fetchScans();
         fetchBaselines();
@@ -119,6 +123,58 @@ export default function App() {
       }
     } catch (e) {
       setStatusMsg(`Connection error: ${e.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const pinBaseline = async (serverId, catPath) => {
+    setLoading(true);
+    setStatusMsg(`Pinning baseline snapshot for '${serverId}'...`);
+    try {
+      const res = await fetch(`${API_BASE}/api/pin`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ server_id: serverId, catalog_path: catPath }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setStatusMsg(`✔ Approved baseline pinned for '${serverId}' (Fingerprint: ${data.catalog_fingerprint.slice(0, 16)}...)`);
+        fetchBaselines();
+      } else {
+        const err = await res.json();
+        setStatusMsg(`Pinning failed: ${err.detail || 'Unknown error'}`);
+      }
+    } catch (e) {
+      setStatusMsg(`Pinning error: ${e.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const runDiff = async (serverId, catPath) => {
+    setLoading(true);
+    setStatusMsg(`Comparing catalog against pinned baseline for '${serverId}'...`);
+    try {
+      const res = await fetch(`${API_BASE}/api/diff`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ server_id: serverId, catalog_path: catPath }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setDiffResult(data);
+        if (data.is_identical) {
+          setStatusMsg(`✔ Identical: Current catalog matches baseline fingerprint (${data.baseline_fingerprint.slice(0, 16)}...)`);
+        } else {
+          setStatusMsg(`⚠ CATALOG DRIFT DETECTED: Added ${data.added_tools?.length || 0} tool(s), Removed ${data.removed_tools?.length || 0} tool(s).`);
+        }
+      } else {
+        const err = await res.json();
+        setStatusMsg(`Diff comparison failed: ${err.detail || 'Ensure a baseline is pinned first.'}`);
+      }
+    } catch (e) {
+      setStatusMsg(`Diff error: ${e.message}`);
     } finally {
       setLoading(false);
     }
@@ -333,6 +389,172 @@ export default function App() {
                   {selectedScan?.server_name || 'Select target'}
                 </span>
               </div>
+            </div>
+
+            {/* ── Interactive Mission Control & Input Console ──────────────── */}
+            <div className="glass-panel" style={{ padding: '1.5rem', marginBottom: '2rem', border: '1px solid rgba(6, 182, 212, 0.3)', background: 'linear-gradient(135deg, rgba(6, 182, 212, 0.05), rgba(79, 70, 229, 0.05))' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '1rem' }}>
+                <div>
+                  <h2 style={{ fontSize: '1.2rem', fontWeight: '800', display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                    <Terminal size={20} color="#06B6D4" />
+                    Interactive Security Auditor Mission Control
+                  </h2>
+                  <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>
+                    Input any MCP server path or click a 1-click evaluation benchmark below to audit live:
+                  </p>
+                </div>
+                
+                {/* Qwen LLM Toggle Switch */}
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', cursor: 'pointer', background: 'rgba(255,255,255,0.04)', padding: '0.4rem 0.8rem', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
+                  <input
+                    type="checkbox"
+                    checked={useLlm}
+                    onChange={(e) => setUseLlm(e.target.checked)}
+                    style={{ width: '16px', height: '16px', accentColor: '#06B6D4', cursor: 'pointer' }}
+                  />
+                  <span style={{ fontSize: '0.85rem', fontWeight: '600', color: useLlm ? '#06B6D4' : 'var(--text-secondary)' }}>
+                    Enable Qwen 2.5 Coder AI Heuristics
+                  </span>
+                  <span style={{ fontSize: '0.65rem', padding: '0.1rem 0.4rem', borderRadius: '4px', background: 'rgba(6, 182, 212, 0.15)', color: '#38BDF8', fontWeight: '700' }}>
+                    7B / 3B Ollama
+                  </span>
+                </label>
+              </div>
+
+              {/* Quick Scenario Preset Chips */}
+              <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.25rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.75rem', fontWeight: '700', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', marginRight: '0.25rem' }}>
+                  Quick Scenarios:
+                </span>
+                {[
+                  { id: 'lying_annotations', label: '1. Lying Annotations (Trust Gap USP)', path: 'fixtures/lying_annotations' },
+                  { id: 'rogue_server', label: '2. Rogue Server (Shell Exec)', path: 'fixtures/rogue_server' },
+                  { id: 'poisoned_description', label: '3. Poisoned Description (Prompt Injection)', path: 'fixtures/poisoned_description' },
+                  { id: 'clean_reader', label: '4. Clean Reader (Safe Baseline)', path: 'fixtures/clean_reader' },
+                  { id: 'rug_pull', label: '5. Rug Pull (Supply Chain Drift)', path: 'fixtures/rug_pull/catalog_v2.json' },
+                ].map(preset => (
+                  <button
+                    key={preset.id}
+                    onClick={() => {
+                      setCustomPath(preset.path);
+                      setTargetName(preset.id);
+                    }}
+                    style={{
+                      padding: '0.35rem 0.75rem',
+                      borderRadius: '6px',
+                      fontSize: '0.75rem',
+                      fontWeight: '600',
+                      cursor: 'pointer',
+                      background: customPath === preset.path ? 'rgba(6, 182, 212, 0.2)' : 'rgba(255,255,255,0.03)',
+                      color: customPath === preset.path ? '#38BDF8' : 'var(--text-secondary)',
+                      border: customPath === preset.path ? '1px solid #06B6D4' : '1px solid var(--border-subtle)',
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Input Bar & Execution Action Buttons */}
+              <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                <div style={{ flex: 1, minWidth: '280px', display: 'flex', alignItems: 'center', background: '#05070B', border: '1px solid var(--border-subtle)', borderRadius: '8px', padding: '0 0.8rem' }}>
+                  <Search size={16} color="var(--text-muted)" style={{ marginRight: '0.5rem' }} />
+                  <input
+                    type="text"
+                    placeholder="Enter MCP server directory or catalog path (e.g. fixtures/lying_annotations)"
+                    value={customPath}
+                    onChange={(e) => {
+                      setCustomPath(e.target.value);
+                      const parts = e.target.value.split(/[\\/]/).filter(Boolean);
+                      setTargetName(parts[parts.length - 1] || 'custom_target');
+                    }}
+                    style={{
+                      width: '100%',
+                      background: 'transparent',
+                      border: 'none',
+                      padding: '0.75rem 0',
+                      color: '#F8FAFC',
+                      fontSize: '0.9rem',
+                      fontFamily: 'var(--font-mono)',
+                      outline: 'none',
+                    }}
+                  />
+                </div>
+
+                {/* Primary Run Audit Button */}
+                <button
+                  onClick={() => runScan(customPath, targetName)}
+                  disabled={loading || !customPath}
+                  className="btn btn-primary"
+                  style={{
+                    padding: '0.75rem 1.5rem',
+                    fontSize: '0.9rem',
+                    fontWeight: '700',
+                    background: 'linear-gradient(135deg, #06B6D4, #3B82F6)',
+                    boxShadow: '0 0 15px rgba(6, 182, 212, 0.4)',
+                    minWidth: '170px',
+                  }}
+                >
+                  {loading ? <RefreshCw size={16} className="spin" /> : <Zap size={16} />}
+                  RUN AUDIT
+                </button>
+
+                {/* Pin Baseline Button */}
+                <button
+                  onClick={() => pinBaseline(targetName || 'clean_reader', customPath.endsWith('.json') ? customPath : `${customPath}/catalog.json`)}
+                  disabled={loading || !customPath}
+                  className="btn btn-secondary"
+                  style={{ padding: '0.75rem 1.25rem', fontSize: '0.85rem' }}
+                  title="Pin this catalog version as the authorized cryptographic baseline"
+                >
+                  <Lock size={15} /> Pin Baseline
+                </button>
+
+                {/* Run Diff Rug Pull Check Button */}
+                <button
+                  onClick={() => runDiff(targetName.includes('rug_pull') ? 'clean_reader' : (targetName || 'clean_reader'), customPath.endsWith('.json') ? customPath : `${customPath}/catalog.json`)}
+                  disabled={loading || !customPath}
+                  className="btn btn-secondary"
+                  style={{ padding: '0.75rem 1.25rem', fontSize: '0.85rem', borderColor: 'rgba(249, 115, 22, 0.4)', color: '#F97316' }}
+                  title="Compare current catalog against pinned baseline to detect supply chain drift"
+                >
+                  <AlertTriangle size={15} /> Check Rug Pull
+                </button>
+              </div>
+
+              {/* Diff Result Box if triggered */}
+              {diffResult && (
+                <div style={{
+                  marginTop: '1.25rem',
+                  padding: '1rem',
+                  borderRadius: '8px',
+                  background: diffResult.is_identical ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                  border: diffResult.is_identical ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid rgba(239, 68, 68, 0.3)',
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                    <strong style={{ color: diffResult.is_identical ? '#34D399' : '#F87171', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      {diffResult.is_identical ? <CheckCircle size={16} /> : <AlertTriangle size={16} />}
+                      {diffResult.is_identical ? 'Catalog Identical to Pinned Baseline' : '⚠ Live Supply Chain Drift / Rug Pull Detected!'}
+                    </strong>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Target: {diffResult.server_id}</span>
+                  </div>
+                  <div style={{ fontSize: '0.8rem', fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>
+                    <div>Baseline Fingerprint: <span style={{ color: '#38BDF8' }}>{diffResult.baseline_fingerprint}</span></div>
+                    <div>Current Fingerprint:  <span style={{ color: diffResult.is_identical ? '#38BDF8' : '#F43F5E' }}>{diffResult.current_fingerprint}</span></div>
+                    {diffResult.added_tools?.length > 0 && (
+                      <div style={{ color: '#F43F5E', marginTop: '0.25rem', fontWeight: '700' }}>
+                        + Injected Unauthorized Tools: {diffResult.added_tools.join(', ')}
+                      </div>
+                    )}
+                    {diffResult.removed_tools?.length > 0 && (
+                      <div style={{ color: '#F97316', marginTop: '0.25rem' }}>
+                        - Removed Tools: {diffResult.removed_tools.join(', ')}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Live Interactive Scanner Layout */}

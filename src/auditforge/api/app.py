@@ -15,6 +15,7 @@ from auditforge.core.contracts import CatalogDiff, ScanResult, ServerSnapshot, T
 from auditforge.orchestrator import ScanOrchestrator
 from auditforge.storage.database import Database
 from auditforge.catalog.client import MCPCatalogClient
+from auditforge.catalog.pinning import diff_catalogs
 
 app = FastAPI(
     title="AuditForge Security Auditor API",
@@ -206,3 +207,39 @@ def approve_baseline(server_id: str) -> Dict[str, Any]:
         "catalog_fingerprint": snapshot.catalog_fingerprint,
         "tools_count": len(snapshot.tools),
     }
+
+
+class PinRequest(BaseModel):
+    server_id: str
+    catalog_path: str
+
+
+@app.post("/pin")
+@app.post("/api/pin")
+def pin_catalog_endpoint(req: PinRequest) -> Dict[str, Any]:
+    """Pin a catalog snapshot as an approved baseline."""
+    snapshot = MCPCatalogClient.load_from_file(req.catalog_path, server_id=req.server_id)
+    db.save_baseline(snapshot)
+    return {
+        "status": "PINNED",
+        "server_id": req.server_id,
+        "catalog_fingerprint": snapshot.catalog_fingerprint,
+        "tools_count": len(snapshot.tools),
+    }
+
+
+class DiffRequest(BaseModel):
+    server_id: str
+    catalog_path: str
+
+
+@app.post("/diff")
+@app.post("/api/diff")
+def diff_catalogs_endpoint(req: DiffRequest) -> Dict[str, Any]:
+    """Compare a current catalog against its pinned baseline to detect drift/rug pull."""
+    baseline = db.get_baseline(req.server_id)
+    if not baseline:
+        raise HTTPException(status_code=404, detail=f"No baseline pinned for '{req.server_id}'")
+    current = MCPCatalogClient.load_from_file(req.catalog_path, server_id=req.server_id)
+    diff_res = diff_catalogs(baseline, current)
+    return diff_res.model_dump()
