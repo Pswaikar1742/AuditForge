@@ -1,8 +1,8 @@
 # AUDITFORGE PRODUCTION ARCHITECTURE & SCALING SPECIFICATION
 
-**Document Version:** 1.0.0 (Design Specification)  
-**Classification:** Technical Architecture & Enterprise Scaling Blueprint  
-**Status:** Canonical Production Design (MVP Remains on Verified SQLite Storage)  
+**Document Version:** 2.0.0 (Implemented Production Architecture)  
+**Classification:** Technical Architecture & Enterprise Scaling Specification  
+**Status:** Implemented Production Architecture (Hybrid Local SQLite / Distributed PostgreSQL + Redis Queues)  
 **Authors:** InnoVision Integration Team  
 **Problem Statement:** PS02 — MCP Server Security Auditor  
 
@@ -12,7 +12,9 @@
 
 AuditForge is an evidence-first security auditor designed to inspect, analyze, probe, and baseline Model Context Protocol (MCP) servers before they are granted execution permissions in agentic workflows.
 
-While the hackathon MVP utilizes a robust SQLite WAL persistence layer and single-process orchestration for deterministic evaluation and local developer workflows, enterprise deployment necessitates a horizontally scalable, multi-tenant, and fault-tolerant architecture capable of auditing tens of thousands of MCP tool surfaces concurrently.
+The system features a dual-engine architecture:
+1. **Developer / Air-Gapped Mode:** Zero-dependency standalone SQLite WAL persistence with in-memory execution for rapid developer onboarding and local workstation scanning.
+2. **Enterprise Production Mode:** Fully distributed microservices architecture backed by PostgreSQL 16 connection pooling, Redis 7 task queues, asynchronous distributed worker pools (`auditforge.queue.worker`), and Docker Compose orchestration.
 
 ### Core Architectural Tenets
 1. **Zero Host Execution:** Target servers and untrusted tool handlers never execute directly on host infrastructure. Untrusted dynamic evaluation runs exclusively within microVM or container sandboxes.
@@ -226,3 +228,19 @@ The production architecture maps directly to international AI governance and sec
 - **EU AI Act (Article 15 - Robustness & Cybersecurity):** Protection against prompt injection, unauthorized privilege escalation, and supply chain tampering.
 - **MITRE ATLAS (AML.T0054 - LLM Jailbreak & AML.T0051 - LLM Prompt Injection):** Automated detection of directive overrides in tool schemas.
 - **OWASP Top 10 for LLM (LLM01 & LLM07):** Direct static and behavioral mitigation of Prompt Injection and System Information Leakage.
+
+---
+
+## 8. Implemented Production Artifacts & Operations
+
+The core enterprise scaling architecture has been implemented within the repository:
+
+| Module / Script | File Path | Operational Role |
+|---|---|---|
+| **PostgreSQL Persistence** | `src/auditforge/storage/postgres.py` | Asynchronous connection pooling, JSONB evidence capsules, immutable baseline constraints |
+| **Distributed Task Queue** | `src/auditforge/queue/job_queue.py` | Redis-backed job lifecycle manager with UUID tracking, exponential backoff, and dead-letter handling |
+| **Worker Daemon** | `src/auditforge/queue/worker.py` | Standalone CLI worker pool (`python -m auditforge.queue.worker`) processing audit tasks concurrently |
+| **Data Migration Utility** | `scripts/migrate.py` | Zero-downtime migration utility from SQLite to PostgreSQL with row-count and checksum validation |
+| **Production Orchestration** | `docker-compose.yml` | Multi-container stack orchestrating PostgreSQL 16, Redis 7, AuditForge API, Worker daemon, and Vite UI |
+| **Unified System Launcher** | `run.sh` | Single-command workstation launcher with port auto-cleanup, readiness polling, and clean trap termination |
+

@@ -147,6 +147,34 @@ AuditForge exposes a high-assurance REST API designed for pair-programming and m
 
 ---
 
+### 2.7 RAG Security Intelligence & Remediation Playbooks
+- **Route**: `GET /api/intelligence/recommendations/{finding_id}`
+  - Returns grounded remediation advice retrieved via BM25 matching from the curated vulnerability corpus.
+- **Route**: `POST /api/intelligence/remediation`
+  - Synthesizes actionable remediation steps, safe code patches, and security control mappings for submitted findings.
+- **Route**: `POST /api/intelligence/quarantine`
+  - Automatically generates an isolated, permission-stripped quarantine sandbox wrapper for high-risk MCP tools.
+
+---
+
+### 2.8 Distributed Asynchronous Job Queue
+- **Route**: `POST /api/jobs/submit`
+  - Dispatches an asynchronous audit task to the Redis task queue; returns a unique `job_id`.
+- **Route**: `GET /api/jobs/{job_id}`
+  - Returns real-time task status (`QUEUED`, `RUNNING`, `COMPLETED`, `FAILED`) and resulting audit capsule upon completion.
+- **Route**: `GET /api/jobs`
+  - Lists active and historical queue jobs and worker pool metrics.
+
+---
+
+### 2.9 Saved Markdown Audit Reports Vault
+- **Route**: `GET /api/reports`
+  - Lists all persistent Markdown audit reports stored across `scan_reports/` and `reports/` with metadata (target, date, size).
+- **Route**: `GET /api/reports/{filename}`
+  - Returns the raw Markdown content of a saved audit report for in-browser rendering.
+
+---
+
 ## 3. Registered Evaluation Targets
 
 | Target ID | Path | Threat Vector Audited | Expected Trust State |
