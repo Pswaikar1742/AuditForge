@@ -61,6 +61,10 @@ export default function App() {
   const [loadingJobs, setLoadingJobs] = useState(false);
   const [selectedJobTarget, setSelectedJobTarget] = useState('fixtures/clean_reader');
 
+  const [savedReports, setSavedReports] = useState([]);
+  const [viewingReport, setViewingReport] = useState(null);
+  const [loadingReportContent, setLoadingReportContent] = useState(false);
+
   useEffect(() => {
     checkHealth();
     fetchStats();
@@ -72,6 +76,7 @@ export default function App() {
     fetchIntelligenceStatus();
     fetchIntelligenceSources();
     fetchJobs();
+    fetchSavedReports();
     const interval = setInterval(() => {
       checkHealth();
       fetchJobs();
@@ -118,6 +123,12 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         setSelectedScan(data);
+        if (data.server_name) {
+          setTargetName(data.server_name);
+        }
+        if (data.target) {
+          setCustomPath(data.target);
+        }
       }
     } catch (e) {
       console.error(e);
@@ -233,6 +244,33 @@ export default function App() {
     }
   };
 
+  const fetchSavedReports = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/reports`);
+      if (res.ok) {
+        const data = await res.json();
+        setSavedReports(data);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const openReportViewer = async (filename) => {
+    setLoadingReportContent(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/reports/${filename}`);
+      if (res.ok) {
+        const text = await res.text();
+        setViewingReport({ filename, content: text });
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoadingReportContent(false);
+    }
+  };
+
   const searchKnowledgeBase = async (queryToSearch) => {
     const q = queryToSearch || searchQuery;
     if (!q || !q.trim()) return;
@@ -330,6 +368,8 @@ export default function App() {
 
   const runScan = async (path, name) => {
     setLoading(true);
+    setDiffResult(null);
+    setExpandedFinding(null);
     setStatusMsg(`Running security audit on ${name || path}${useLlm ? ' (with Qwen AI heuristics)' : ''}...`);
     try {
       const res = await fetch(`${API_BASE}/api/scan`, {
@@ -348,6 +388,7 @@ export default function App() {
         setStatusMsg(`✔ Scan completed for ${data.server_name || name}. Trust State: ${data.trust_state}`);
         fetchStats();
         fetchScans();
+        fetchSavedReports();
       } else {
         const err = await res.json();
         setStatusMsg(`Scan failed: ${err.detail || 'Unknown error'}`);
@@ -1150,12 +1191,18 @@ export default function App() {
                     value={targetName}
                     onChange={(e) => {
                       const selected = fixtures.find(f => f.id === e.target.value);
-                      if (selected) {
-                        setTargetName(selected.id);
-                        setCustomPath(selected.path);
+                      const newId = selected ? selected.id : e.target.value;
+                      const newPath = selected ? selected.path : `fixtures/${e.target.value}`;
+                      setTargetName(newId);
+                      setCustomPath(newPath);
+                      setDiffResult(null);
+                      setExpandedFinding(null);
+
+                      const existing = scans.find(s => s.server_name === newId || s.server_name === newPath || s.target === newPath);
+                      if (existing) {
+                        fetchScanDetails(existing.id || existing.scan_id);
                       } else {
-                        setTargetName(e.target.value);
-                        setCustomPath(`fixtures/${e.target.value}`);
+                        runScan(newPath, newId);
                       }
                     }}
                     style={{
@@ -1344,7 +1391,7 @@ export default function App() {
               )}
 
               {/* Vulnerable-versus-Patched / Diff Result Box */}
-              {diffResult && (
+              {diffResult && (diffResult.server_id === targetName || diffResult.server_id === customPath || !targetName) && (
                 <div style={{
                   marginTop: '1.25rem',
                   padding: '1.25rem',
@@ -1357,7 +1404,15 @@ export default function App() {
                       {diffResult.is_identical ? <CheckCircle size={18} /> : <AlertTriangle size={18} />}
                       {diffResult.is_identical ? 'Catalog Identical to Pinned Baseline (0 Drift)' : `⚠ Supply Chain Drift: ${diffResult.drift_category || 'HIGH_RISK_DRIFT'} (PIN-RUGPULL-001)`}
                     </strong>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Target: <strong>{diffResult.server_id}</strong></span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Target: <strong>{diffResult.server_id}</strong></span>
+                      <button
+                        onClick={() => setDiffResult(null)}
+                        style={{ background: 'transparent', border: '1px solid var(--border-subtle)', borderRadius: '4px', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.75rem', padding: '0.2rem 0.5rem' }}
+                      >
+                        ✕ Dismiss
+                      </button>
+                    </div>
                   </div>
 
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem', marginBottom: '1rem' }}>
@@ -1886,6 +1941,175 @@ export default function App() {
                 </div>
               ))}
             </div>
+
+            {/* Saved Markdown Reports Section */}
+            <div className="glass-panel" style={{ marginTop: '2rem', padding: '1.5rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                  <FileCode size={18} color="#38BDF8" />
+                  <h3 style={{ fontSize: '1.05rem', fontWeight: '800' }}>
+                    Saved Markdown Audit Reports ({savedReports.length})
+                  </h3>
+                </div>
+                <button
+                  className="btn btn-secondary"
+                  onClick={fetchSavedReports}
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.75rem', padding: '0.35rem 0.75rem' }}
+                >
+                  <RefreshCw size={13} /> Refresh Reports
+                </button>
+              </div>
+
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
+                Permanent, self-contained Markdown audit reports generated in <code>scan_reports/</code>. Every report encapsulates AST findings, dynamic probe telemetry, and evidence verification digests.
+              </p>
+
+              {savedReports.length === 0 ? (
+                <div style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                  No saved markdown reports found. Run an audit to generate a self-contained report.
+                </div>
+              ) : (
+                <div style={{ maxHeight: '380px', overflowY: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.8rem' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
+                        <th style={{ padding: '0.6rem' }}>REPORT FILENAME</th>
+                        <th style={{ padding: '0.6rem' }}>SCAN ID</th>
+                        <th style={{ padding: '0.6rem' }}>SIZE</th>
+                        <th style={{ padding: '0.6rem' }}>LAST MODIFIED</th>
+                        <th style={{ padding: '0.6rem' }}>ACTIONS</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {savedReports.slice(0, 25).map(rep => (
+                        <tr key={rep.filename} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                          <td style={{ padding: '0.6rem', fontFamily: 'var(--font-mono)', color: '#38BDF8', fontWeight: '700' }}>
+                            {rep.filename}
+                          </td>
+                          <td style={{ padding: '0.6rem', fontFamily: 'var(--font-mono)', color: '#CBD5E1' }}>
+                            {rep.scan_id}
+                          </td>
+                          <td style={{ padding: '0.6rem', color: 'var(--text-muted)' }}>
+                            {(rep.size_bytes / 1024).toFixed(1)} KB
+                          </td>
+                          <td style={{ padding: '0.6rem', color: 'var(--text-muted)' }}>
+                            {rep.modified_at ? new Date(rep.modified_at * 1000).toLocaleString() : 'N/A'}
+                          </td>
+                          <td style={{ padding: '0.6rem' }}>
+                            <div style={{ display: 'flex', gap: '0.4rem' }}>
+                              <button
+                                className="btn btn-secondary"
+                                onClick={() => openReportViewer(rep.filename)}
+                                style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem', borderColor: 'rgba(56, 189, 248, 0.4)', color: '#38BDF8' }}
+                              >
+                                View Report
+                              </button>
+                              <a
+                                href={`${API_BASE}/api/reports/${rep.filename}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                style={{
+                                  padding: '0.2rem 0.5rem',
+                                  fontSize: '0.75rem',
+                                  borderRadius: '6px',
+                                  background: 'rgba(255, 255, 255, 0.05)',
+                                  color: '#F8FAFC',
+                                  textDecoration: 'none',
+                                  border: '1px solid var(--border-subtle)',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '0.2rem',
+                                }}
+                              >
+                                Raw <ExternalLink size={10} />
+                              </a>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Markdown Report Modal Viewer */}
+            {viewingReport && (
+              <div style={{
+                position: 'fixed',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                background: 'rgba(0, 0, 0, 0.85)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                zIndex: 1000,
+                padding: '2rem',
+              }}>
+                <div style={{
+                  background: '#07090E',
+                  borderRadius: '12px',
+                  border: '1px solid rgba(56, 189, 248, 0.4)',
+                  width: '90%',
+                  maxWidth: '900px',
+                  maxHeight: '85vh',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  overflow: 'hidden',
+                  boxShadow: '0 20px 50px rgba(0, 0, 0, 0.8)',
+                }}>
+                  <div style={{
+                    padding: '1rem 1.5rem',
+                    borderBottom: '1px solid var(--border-subtle)',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    background: '#0B0F19',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                      <FileCode size={18} color="#38BDF8" />
+                      <strong style={{ color: '#F8FAFC', fontFamily: 'var(--font-mono)' }}>{viewingReport.filename}</strong>
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      <a
+                        href={`${API_BASE}/api/reports/${viewingReport.filename}`}
+                        download={viewingReport.filename}
+                        className="btn btn-secondary"
+                        style={{ padding: '0.3rem 0.75rem', fontSize: '0.75rem', textDecoration: 'none' }}
+                      >
+                        Download .md
+                      </a>
+                      <button
+                        className="btn btn-secondary"
+                        onClick={() => setViewingReport(null)}
+                        style={{ padding: '0.3rem 0.6rem', fontSize: '0.75rem' }}
+                      >
+                        ✕ Close
+                      </button>
+                    </div>
+                  </div>
+
+                  <div style={{ padding: '1.5rem', overflowY: 'auto', flex: 1 }}>
+                    <pre style={{
+                      margin: 0,
+                      padding: '1.25rem',
+                      background: '#030508',
+                      borderRadius: '8px',
+                      color: '#E2E8F0',
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: '0.85rem',
+                      whiteSpace: 'pre-wrap',
+                      lineHeight: 1.5,
+                      border: '1px solid rgba(255, 255, 255, 0.05)',
+                    }}>
+                      {viewingReport.content}
+                    </pre>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 

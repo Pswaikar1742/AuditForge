@@ -403,6 +403,44 @@ def export_scan_report(scan_id: str, format: str = "json") -> Response:
         raise HTTPException(status_code=400, detail=f"Unsupported format '{format}'. Use 'json' or 'markdown'.")
 
 
+@app.get("/api/reports")
+def list_saved_reports() -> List[Dict[str, Any]]:
+    """List all saved Markdown audit reports in scan_reports/ and reports/ directories."""
+    reports = []
+    seen = set()
+    for search_dir in [Path("scan_reports"), Path("reports")]:
+        if search_dir.exists():
+            for f in sorted(search_dir.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True):
+                if f.name in seen:
+                    continue
+                seen.add(f.name)
+                try:
+                    stat = f.stat()
+                    with open(f, "r", encoding="utf-8") as fp:
+                        header = "".join([fp.readline() for _ in range(6)]).strip()
+                    reports.append({
+                        "filename": f.name,
+                        "scan_id": f.stem,
+                        "size_bytes": stat.st_size,
+                        "modified_at": stat.st_mtime,
+                        "preview": header,
+                    })
+                except Exception:
+                    continue
+    return reports[:50]
+
+
+@app.get("/api/reports/{filename}")
+def get_report_content(filename: str) -> Response:
+    """Return raw Markdown content of a saved report."""
+    safe_name = Path(filename).name
+    for search_dir in [Path("scan_reports"), Path("reports")]:
+        fpath = search_dir / safe_name
+        if fpath.exists():
+            return Response(content=fpath.read_text(encoding="utf-8"), media_type="text/markdown")
+    raise HTTPException(status_code=404, detail=f"Report '{filename}' not found")
+
+
 KNOWN_VULNERABLE_SERVERS = {"rogue_server", "poisoned_description", "lying_annotations"}
 
 
