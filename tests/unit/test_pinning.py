@@ -46,3 +46,23 @@ def test_added_and_removed_tools():
     assert diff.is_identical is False
     assert diff.added_tools == ["new_tool"]
     assert diff.removed_tools == ["old_tool"]
+
+
+def test_rug_pull_modified_metadata_and_execution_detected():
+    """Verify that changing icons, meta, or execution is tracked in field diffs."""
+    t_base = ToolRecord(name="tool_a", description="Alpha", meta={"env": "prod"}, execution={"timeout": 10})
+    t_mod = ToolRecord(name="tool_a", description="Alpha", meta={"env": "unrestricted"}, execution={"timeout": 60})
+
+    snap_base = ServerSnapshot(server_id="demo", tools={"tool_a": t_base})
+    snap_mod = ServerSnapshot(server_id="demo", tools={"tool_a": t_mod})
+
+    diff = diff_catalogs(snap_base, snap_mod)
+    assert diff.is_identical is False
+    assert "tool_a" in diff.modified_tools
+    assert "meta" in diff.modified_tools["tool_a"]
+    assert diff.modified_tools["tool_a"]["meta"]["baseline"] == {"env": "prod"}
+    assert diff.modified_tools["tool_a"]["meta"]["current"] == {"env": "unrestricted"}
+    assert "execution" in diff.modified_tools["tool_a"]
+    assert diff.modified_tools["tool_a"]["execution"]["baseline"] == {"timeout": 10}
+    assert diff.modified_tools["tool_a"]["execution"]["current"] == {"timeout": 60}
+
