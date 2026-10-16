@@ -562,24 +562,60 @@ class KoalaAuditRequest(BaseModel):
 
 @app.get("/api/assurance/model")
 def get_model_assurance() -> Dict[str, Any]:
-    """Retrieve model governance assurance report powered by KOALA (DomAiyn Labs)."""
-    runner = KoalaAssuranceRunner()
-    try:
-        report = runner.run_audit()
+    """Retrieve model governance assurance report powered by KOALA (DomAiyn Labs).
+    
+    Returns the most recent completed audit report or a NOT_ASSESSED state.
+    Does NOT trigger an expensive on-demand evaluation.
+    """
+    report = KoalaAssuranceRunner.get_latest_report()
+    if report:
         return report.model_dump()
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to generate model assurance report: {exc}")
+
+    return {
+        "status": "NOT_ASSESSED",
+        "audit_mode": "NOT_ASSESSED",
+        "audit_id": "none",
+        "tool_version": "0.2.0",
+        "generated_at": "",
+        "execution_timestamp": "",
+        "evidence_provenance": "NONE",
+        "model_id": "Qwen2.5-Coder-7B-Instruct",
+        "frameworks": [],
+        "summary": {
+            "controls_total": 0,
+            "machine_verified": 0,
+            "self_attested": 0,
+            "not_assessed": 0,
+            "failed": 0,
+            "machine_verification_percent": 0.0,
+            "assessment_coverage_percent": 0.0,
+        },
+        "results": [],
+        "attribution": "Audited via KOALA (version 0.2.0) by DomAiyn Labs (Apache 2.0)",
+        "message": "No model governance audit has been executed yet. Trigger a fresh audit via POST /api/assurance/audit.",
+    }
 
 
 @app.post("/api/assurance/audit")
 def trigger_model_assurance(req: KoalaAuditRequest) -> Dict[str, Any]:
     """Execute on-demand KOALA model assurance audit for local AI models."""
     runner = KoalaAssuranceRunner()
+    if not runner.is_available():
+        raise HTTPException(
+            status_code=503,
+            detail="KOALA CLI v0.2.0 is not installed or available on this system.",
+        )
+
     try:
         report = runner.run_audit(
             frameworks=req.frameworks,
             target_runtime=req.target_runtime,
         )
         return report.model_dump()
+    except TimeoutError:
+        raise HTTPException(status_code=504, detail="KOALA model assurance audit timed out.")
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"KOALA assurance audit execution failed: {exc}")
+        clean_msg = str(exc)
+        if "/home/" in clean_msg or "/run/media/" in clean_msg:
+            clean_msg = clean_msg.split(":")[-1].strip()
+        raise HTTPException(status_code=500, detail=f"KOALA assurance audit failed: {clean_msg}")

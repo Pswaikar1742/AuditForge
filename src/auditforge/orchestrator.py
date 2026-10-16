@@ -104,7 +104,9 @@ class ScanOrchestrator:
             "static_ast": "UNKNOWN",
             "description_intelligence": "UNKNOWN",
             "dynamic_probing": "UNKNOWN",
+            "trust_gap": "UNKNOWN",
             "baseline_pinning": "UNKNOWN",
+            "evidence_sealing": "UNKNOWN",
         }
 
         # 1. Resolve Target Inputs & MCP Catalog Discovery
@@ -277,6 +279,17 @@ class ScanOrchestrator:
         )
         all_findings.extend(gap_findings)
         all_evidence.extend(gap_evidence)
+        if gap_findings:
+            stage_coverage["trust_gap"] = "TRUST_GAP_FLAGGED"
+        elif snapshot:
+            stage_coverage["trust_gap"] = "PASS"
+        else:
+            stage_coverage["trust_gap"] = "SKIPPED"
+
+        if all_evidence:
+            stage_coverage["evidence_sealing"] = "PASS"
+        else:
+            stage_coverage["evidence_sealing"] = "EMPTY"
 
         # 7. Generate Executive Summary
         crit_count = sum(1 for f in all_findings if f.severity == Severity.CRITICAL)

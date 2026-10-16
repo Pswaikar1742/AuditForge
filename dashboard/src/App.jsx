@@ -135,7 +135,8 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         setKoalaReport(data);
-        setStatusMsg("✔ KOALA Governance Audit Completed: 33 controls assessed.");
+        const count = data.summary?.controls_total ?? (data.results?.length ?? 0);
+        setStatusMsg(`✔ KOALA Governance Audit Completed: ${count} controls assessed (${data.audit_mode || 'STATIC_GOVERNANCE_AUDIT'}).`);
       } else {
         const err = await res.json();
         setStatusMsg(`KOALA audit failed: ${err.detail || 'Unknown error'}`);
@@ -327,13 +328,17 @@ export default function App() {
     if (stage.key === 'description_intelligence') return scan.stage_coverage?.description_intelligence || 'SKIPPED';
     if (stage.key === 'dynamic_probing') return scan.stage_coverage?.dynamic_probing || 'SKIPPED';
     if (stage.key === 'trust_gap') {
-      if (scan.trust_state === 'TRUST_GAP' || scan.trust_state === 'ROGUE') return 'TRUST_GAP_FLAGGED';
+      if (scan.stage_coverage?.trust_gap) return scan.stage_coverage.trust_gap;
+      if (scan.trust_state === 'TRUST_GAP') return 'TRUST_GAP_FLAGGED';
       if (scan.trust_state === 'VERIFIED') return 'PASS';
-      return scan.trust_state || 'UNKNOWN';
+      return 'UNKNOWN';
     }
     if (stage.key === 'baseline_pinning') return scan.stage_coverage?.baseline_pinning || (scan.diff ? 'DIFF_DETECTED' : 'NOT_PINNED');
-    if (stage.key === 'evidence_sealing') return scan.completed_at ? 'PASS' : 'IN_PROGRESS';
-    return 'PASS';
+    if (stage.key === 'evidence_sealing') {
+      if (scan.stage_coverage?.evidence_sealing) return scan.stage_coverage.evidence_sealing;
+      return (scan.evidence && scan.evidence.length > 0) ? 'PASS' : 'UNKNOWN';
+    }
+    return 'UNKNOWN';
   };
 
   const findingsList = (selectedScan?.findings || []).filter(f => {
@@ -1227,27 +1232,31 @@ export default function App() {
               <div className="glass-panel" style={{ padding: '1.25rem' }}>
                 <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: '600' }}>Evaluated Controls</span>
                 <div style={{ fontSize: '1.75rem', fontWeight: '800', marginTop: '0.25rem', color: '#F8FAFC' }}>
-                  {koalaReport?.summary?.controls_total || 33}
+                  {koalaReport?.summary?.controls_total ?? 0}
                 </div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>NIST AI RMF & EU AI Act</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
+                  Mode: <strong style={{ color: '#93C5FD' }}>{koalaReport?.audit_mode || 'NOT_ASSESSED'}</strong>
+                </div>
               </div>
 
               <div className="glass-panel" style={{ padding: '1.25rem' }}>
                 <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: '600' }}>Machine Verified</span>
                 <div style={{ fontSize: '1.75rem', fontWeight: '800', marginTop: '0.25rem', color: '#10B981' }}>
-                  {koalaReport?.summary?.machine_verified || 14}
+                  {koalaReport?.summary?.machine_verified ?? 0}
                 </div>
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
-                  {koalaReport?.summary?.machine_verification_percent || 42.4}% Coverage Rate
+                  {koalaReport?.summary?.machine_verification_percent ?? 0}% Coverage Rate
                 </div>
               </div>
 
               <div className="glass-panel" style={{ padding: '1.25rem' }}>
                 <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: '600' }}>Identified Governance Gaps</span>
                 <div style={{ fontSize: '1.75rem', fontWeight: '800', marginTop: '0.25rem', color: '#F59E0B' }}>
-                  {koalaReport?.summary?.failed || 10}
+                  {koalaReport?.summary?.failed ?? 0}
                 </div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>With actionable remediation advice</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
+                  {koalaReport?.summary?.not_assessed ?? 0} Unassessed
+                </div>
               </div>
 
               <div className="glass-panel" style={{ padding: '1.25rem' }}>
@@ -1255,7 +1264,9 @@ export default function App() {
                 <div style={{ fontSize: '1.1rem', fontWeight: '700', marginTop: '0.5rem', color: '#38BDF8' }}>
                   {koalaReport?.model_id || 'Qwen2.5-Coder-7B'}
                 </div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>Local Open-Weight Causal LM</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
+                  {koalaReport?.evidence_provenance || 'KOALA v0.2.0 Engine'}
+                </div>
               </div>
             </div>
 
