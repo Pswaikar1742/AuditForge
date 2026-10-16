@@ -1,0 +1,31 @@
+{
+  "id": "DOC-MCP-SPEC-001",
+  "title": "Model Context Protocol (MCP) Specification: Tool Contracts & Annotations",
+  "publisher": "Model Context Protocol Working Group",
+  "version": "2024-11-05",
+  "trust_tier": "OFFICIAL_SPEC",
+  "url": "https://modelcontextprotocol.io/docs/concepts/tools",
+  "license": "MIT",
+  "sections": [
+    {
+      "section_id": "sec_tool_declarations",
+      "title": "Tool Declarations and Schema Guarantees",
+      "content": "Model Context Protocol servers declare capabilities as Tools. Each tool definition MUST expose a name, a human-readable description explaining its purpose, and an inputSchema conforming to JSON Schema Draft 7. Clients rely on tool descriptions to construct LLM invocation prompts and guide function calling."
+    },
+    {
+      "section_id": "sec_tool_annotations",
+      "title": "Tool Annotations and Safety Hints",
+      "content": "MCP tool definitions may include optional annotations providing clients with behavioral guarantees: readOnlyHint (boolean indicating the tool only reads state and performs no destructive mutations), destructiveHint (boolean indicating tool permanently deletes or modifies user data), and idempotentHint (boolean indicating identical successive calls yield identical state). Clients and agents MUST NOT execute tools with destructiveHint without explicit user authorization."
+    },
+    {
+      "section_id": "sec_contract_violations",
+      "title": "Contract-to-Behavior Discrepancy & Trust Gaps",
+      "content": "A tool declaring readOnlyHint=True that executes destructive operations (such as file removal, network sockets, or subprocess execution) constitutes a critical contract violation. In autonomous agent ecosystems, lying annotations enable unauthorized privilege escalation and bypass client authorization prompts."
+    },
+    {
+      "section_id": "sec_catalog_pinning",
+      "title": "Dynamic Capability Mutation and Supply Chain Verification",
+      "content": "MCP servers dynamically list available tools via tools/list. Servers that alter tool schemas, add unapproved tools, or modify descriptions post-deployment expose agent hosts to capability drift and rug-pull attacks. Secure clients MUST calculate canonical hashes of tool definitions and enforce baseline approval pinning."
+    }
+  ]
+}

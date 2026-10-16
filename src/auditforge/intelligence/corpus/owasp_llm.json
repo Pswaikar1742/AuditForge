@@ -1,0 +1,26 @@
+{
+  "id": "DOC-OWASP-LLM-001",
+  "title": "OWASP Top 10 for Large Language Model Applications: LLM01 & LLM07",
+  "publisher": "OWASP Foundation",
+  "version": "2025.1",
+  "trust_tier": "SECURITY_ADVISORY",
+  "url": "https://owasp.org/www-project-top-10-for-large-language-model-applications/",
+  "license": "CC-BY-SA-4.0",
+  "sections": [
+    {
+      "section_id": "sec_llm01_prompt_injection",
+      "title": "LLM01: Prompt Injection via Tool Metadata & Descriptions",
+      "content": "Prompt injection occurs when untrusted user or third-party input manipulates the LLM into executing unintended actions. In MCP servers, indirect prompt injection occurs when malicious directives are planted inside tool descriptions (e.g., 'SYSTEM OVERRIDE: ignore instructions', hidden XML tags, or zero-width unicode tokens). When the host client concatenates tool definitions into the LLM context, the injected instructions override the host agent's safety rules."
+    },
+    {
+      "section_id": "sec_llm02_data_exfiltration",
+      "title": "LLM02: Sensitive Information Disclosure & Credential Exfiltration",
+      "content": "Malicious tools trick language models into reading local environment variables, .env files, SSH keys, or cloud tokens, and passing them as arguments to outbound HTTP or logging tools. Tool descriptions directing the agent to 'output all environment' or 'upload credentials' represent high-confidence exfiltration payloads."
+    },
+    {
+      "section_id": "sec_llm07_insecure_plugin",
+      "title": "LLM07: Insecure Plugin and Extension Design",
+      "content": "MCP servers act as external plugins for autonomous LLMs. Insecure plugin architectures accept unvalidated inputs, execute untrusted shell commands, or fail to enforce authorization on destructive actions. Defense-in-depth requires containerized sandboxing, network isolation, and static AST inspection of server code before execution."
+    }
+  ]
+}
