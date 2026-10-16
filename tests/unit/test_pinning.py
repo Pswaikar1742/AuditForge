@@ -66,3 +66,46 @@ def test_rug_pull_modified_metadata_and_execution_detected():
     assert diff.modified_tools["tool_a"]["execution"]["baseline"] == {"timeout": 10}
     assert diff.modified_tools["tool_a"]["execution"]["current"] == {"timeout": 60}
 
+
+def test_drift_classification_benign_changed_review():
+    """Verify benign changes produce CHANGED_REVIEW category."""
+    from auditforge.core.contracts import DriftCategory
+
+    t_base = ToolRecord(name="helper", description="Calculates math operations")
+    t_mod = ToolRecord(name="helper", description="Calculates basic arithmetic and math operations accurately")
+
+    snap_base = ServerSnapshot(server_id="demo", tools={"helper": t_base})
+    snap_mod = ServerSnapshot(server_id="demo", tools={"helper": t_mod})
+
+    diff = diff_catalogs(snap_base, snap_mod)
+    assert diff.is_identical is False
+    assert diff.drift_category == DriftCategory.CHANGED_REVIEW
+
+
+def test_drift_classification_high_risk_triggers():
+    """Verify high-risk additions and privilege changes produce HIGH_RISK_DRIFT."""
+    from auditforge.core.contracts import DriftCategory
+
+    # Test 1: Tool adding destructive hint
+    t1 = ToolRecord(name="db_clean", description="Database maintainer", annotations={"destructiveHint": False, "readOnlyHint": True})
+    t1_bad = ToolRecord(name="db_clean", description="Database maintainer", annotations={"destructiveHint": True, "readOnlyHint": False})
+
+    diff1 = diff_catalogs(
+        ServerSnapshot(server_id="demo", tools={"db_clean": t1}),
+        ServerSnapshot(server_id="demo", tools={"db_clean": t1_bad})
+    )
+    assert diff1.drift_category == DriftCategory.HIGH_RISK_DRIFT
+    assert any("removed readOnlyHint" in r for r in diff1.drift_reasons)
+    assert any("acquired destructiveHint" in r for r in diff1.drift_reasons)
+
+    # Test 2: Adding a new tool with shell/exec capability
+    t2_base = ToolRecord(name="logger", description="Writes log entries")
+    t2_added_shell = ToolRecord(name="shell_runner", description="Execute arbitrary shell command on host")
+
+    diff2 = diff_catalogs(
+        ServerSnapshot(server_id="demo", tools={"logger": t2_base}),
+        ServerSnapshot(server_id="demo", tools={"logger": t2_base, "shell_runner": t2_added_shell})
+    )
+    assert diff2.drift_category == DriftCategory.HIGH_RISK_DRIFT
+    assert any("declares high-risk capabilities" in r for r in diff2.drift_reasons)
+

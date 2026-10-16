@@ -146,7 +146,96 @@ def test_api_live_rug_pull_demo():
     res = client.post("/api/demo/rug-pull")
     assert res.status_code == 200
     data = res.json()
-    assert data["status"] == "RUG_PULL_DETECTED"
-    assert data["is_identical"] is False
-    assert "word_count" in data["modified_tools"]
-    assert data["baseline_fingerprint"] != data["mutated_fingerprint"]
+    assert data["target"] == "rug_pull"
+    assert data["diff"]["is_identical"] is False
+    assert "word_count" in data["diff"]["modified_tools"]
+    assert data["v1_baseline_hash"] != data["v2_mutated_hash"]
+
+
+def test_probe_outcomes_aggregation_regression():
+    """Verify explicit aggregation ensures TOOL_ERROR, TIMEOUT, UNKNOWN, SKIPPED cannot silently count as PASS."""
+    from auditforge.core.contracts import ProbeOutcome, ProbeStatus
+    from auditforge.orchestrator import aggregate_probe_outcomes
+
+    # Empty -> SKIPPED
+    assert aggregate_probe_outcomes([]) == "SKIPPED"
+
+    # All OK -> PASS
+    assert aggregate_probe_outcomes([
+        ProbeOutcome(case_id="1", tool_name="t1", status=ProbeStatus.OK),
+        ProbeOutcome(case_id="2", tool_name="t2", status=ProbeStatus.OK),
+    ]) == "PASS"
+
+    # Any TOOL_ERROR -> ERROR
+    assert aggregate_probe_outcomes([
+        ProbeOutcome(case_id="1", tool_name="t1", status=ProbeStatus.OK),
+        ProbeOutcome(case_id="2", tool_name="t2", status=ProbeStatus.TOOL_ERROR),
+    ]) == "ERROR"
+
+    # Any TIMEOUT -> ERROR
+    assert aggregate_probe_outcomes([
+        ProbeOutcome(case_id="1", tool_name="t1", status=ProbeStatus.OK),
+        ProbeOutcome(case_id="2", tool_name="t2", status=ProbeStatus.TIMEOUT),
+    ]) == "ERROR"
+
+    # Any UNKNOWN -> ERROR
+    assert aggregate_probe_outcomes([
+        ProbeOutcome(case_id="1", tool_name="t1", status=ProbeStatus.OK),
+        ProbeOutcome(case_id="2", tool_name="t2", status=ProbeStatus.UNKNOWN),
+    ]) == "ERROR"
+
+    # All SKIPPED -> SKIPPED
+    assert aggregate_probe_outcomes([
+        ProbeOutcome(case_id="1", tool_name="t1", status=ProbeStatus.SKIPPED),
+    ]) == "SKIPPED"
+
+    # Mixed OK and SKIPPED (no errors) -> SKIPPED (SKIPPED cannot silently count as PASS)
+    assert aggregate_probe_outcomes([
+        ProbeOutcome(case_id="1", tool_name="t1", status=ProbeStatus.OK),
+        ProbeOutcome(case_id="2", tool_name="t2", status=ProbeStatus.SKIPPED),
+    ]) == "SKIPPED"
+
+
+def test_api_baseline_immutable_preservation_and_reapproval():
+    """Verify existing baselines are preserved unless reapprove=True is specified."""
+    # First approval
+    res1 = client.post("/api/baselines/clean_reader/approve")
+    assert res1.status_code == 200
+    assert res1.json()["status"] == "APPROVED"
+
+    # Second approval without reapprove=True must preserve existing baseline
+    res2 = client.post("/api/baselines/clean_reader/approve")
+    assert res2.status_code == 200
+    data2 = res2.json()
+    assert data2["status"] == "PRESERVED_EXISTING"
+    assert data2["preserved"] is True
+
+    # Third approval with reapprove=True overwrites
+    res3 = client.post("/api/baselines/clean_reader/approve", json={"reapprove": True})
+    assert res3.status_code == 200
+    assert res3.json()["status"] == "APPROVED"
+
+
+def test_api_vulnerable_approval_guard():
+    """Verify approving known vulnerable servers is blocked without explicit force=True."""
+    for vuln_target in ["rogue_server", "poisoned_description", "lying_annotations"]:
+        res = client.post(f"/api/baselines/{vuln_target}/approve")
+        assert res.status_code == 400
+        assert "Safety Guard" in res.json()["detail"]
+
+        # With force=True, approval succeeds
+        res_forced = client.post(f"/api/baselines/{vuln_target}/approve", json={"force": True})
+        assert res_forced.status_code == 200
+        assert res_forced.json()["status"] == "APPROVED"
+
+
+def test_api_server_identity_trust():
+    """Verify browser-controlled server_name is ignored in favor of trusted allowlisted identity."""
+    res = client.post("/api/scan", json={
+        "target_id": "clean_reader",
+        "server_name": "spoofed_admin_server",
+    })
+    assert res.status_code == 200
+    # Identity is derived strictly from allowlisted target ID
+    assert res.json()["server_name"] == "clean_reader"
+

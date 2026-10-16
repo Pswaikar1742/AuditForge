@@ -55,3 +55,33 @@ async def test_pagination_and_duplicate_cursor():
 async def test_missing_command():
     with pytest.raises(MCPConnectionError, match='required'):
         await MCPCatalogClient().discover_live()
+
+
+@pytest.mark.asyncio
+async def test_full_mcp_surface_discovery():
+    """Verify discovery of tools, resources, prompts, and server capabilities."""
+    client = MCPCatalogClient(['unused'])
+    session = SimpleNamespace(
+        server_info=SimpleNamespace(name="mock-server", version="1.0.0", model_dump=lambda: {"name": "mock-server", "version": "1.0.0"}),
+        server_capabilities=SimpleNamespace(tools={}, resources={}, prompts={}, model_dump=lambda: {"tools": {}, "resources": {}, "prompts": {}}),
+        list_tools=AsyncMock(return_value=SimpleNamespace(tools=[Tool(name='demo_tool', inputSchema={})], next_cursor=None)),
+        list_resources=AsyncMock(return_value=SimpleNamespace(resources=[SimpleNamespace(uri="file:///mock/data", name="data_file", model_dump=lambda: {"uri": "file:///mock/data", "name": "data_file"})])),
+        list_prompts=AsyncMock(return_value=SimpleNamespace(prompts=[SimpleNamespace(name="summary_prompt", description="Summarize text", model_dump=lambda: {"name": "summary_prompt", "description": "Summarize text"})])),
+    )
+    @asynccontextmanager
+    async def connected():
+        yield session
+    client._session = connected
+
+    snapshot = await client.discover_live()
+    assert "demo_tool" in snapshot.tools
+    assert snapshot.resources["status"] == "OK"
+    assert len(snapshot.resources["items"]) == 1
+    assert snapshot.resources["items"][0]["name"] == "data_file"
+    assert snapshot.prompts["status"] == "OK"
+    assert len(snapshot.prompts["items"]) == 1
+    assert snapshot.prompts["items"][0]["name"] == "summary_prompt"
+    assert snapshot.capabilities["server_info"]["name"] == "mock-server"
+    assert snapshot.tools_fingerprint != ""
+    assert snapshot.resources_fingerprint != ""
+    assert snapshot.prompts_fingerprint != ""

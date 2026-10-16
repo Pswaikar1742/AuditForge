@@ -143,10 +143,17 @@ class DescriptionAnalyzer:
                 raw_response = data.get("response", "").strip()
                 if not raw_response and "thinking" in data:
                     raw_response = data.get("thinking", "").strip()
-                if raw_response.startswith("```"):
-                    raw_response = re.sub(r"^```(?:json)?\s*", "", raw_response)
-                    raw_response = re.sub(r"\s*```$", "", raw_response)
-                parsed = json.loads(raw_response)
+                # Extract JSON even if wrapped in markdown codeblocks or preceded by reasoning text
+                clean_json = raw_response
+                codeblock_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", raw_response)
+                if codeblock_match:
+                    clean_json = codeblock_match.group(1).strip()
+                brace_start = clean_json.find("{")
+                brace_end = clean_json.rfind("}")
+                if brace_start != -1 and brace_end != -1 and brace_end > brace_start:
+                    parsed = json.loads(clean_json[brace_start : brace_end + 1])
+                else:
+                    parsed = json.loads(clean_json)
 
                 if parsed.get("is_suspicious"):
                     quote = parsed.get("verbatim_quote", "")

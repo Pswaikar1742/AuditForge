@@ -43,11 +43,27 @@ class MCPCatalogClient:
             raise MCPConnectionError(f"MCP stdio operation failed: {exc}") from exc
 
     async def discover_live(self) -> ServerSnapshot:
-        """Initialize a real MCP session and retrieve every tools/list page."""
+        """Initialize a real MCP session and retrieve every tools/list page, resources, and prompts."""
         tools = {}
         cursors = set()
         cursor = None
+        capabilities = {}
+        resources_dict = {"status": "UNSUPPORTED", "items": []}
+        prompts_dict = {"status": "UNSUPPORTED", "items": []}
+
         async with self._session() as session:
+            # 1. Capture server info and capabilities if available
+            try:
+                server_info = getattr(session, "server_info", None)
+                server_caps = getattr(session, "server_capabilities", None)
+                if server_info:
+                    capabilities["server_info"] = server_info.model_dump() if hasattr(server_info, "model_dump") else str(server_info)
+                if server_caps:
+                    capabilities["capabilities"] = server_caps.model_dump() if hasattr(server_caps, "model_dump") else str(server_caps)
+            except Exception:
+                pass
+
+            # 2. Discover Tools (paginated)
             while True:
                 page = await session.list_tools(
                     params=types.PaginatedRequestParams(cursor=cursor) if cursor else None
@@ -63,8 +79,62 @@ class MCPCatalogClient:
                 if not cursor or cursor in cursors:
                     raise MCPConnectionError("Invalid or repeated tools/list cursor")
                 cursors.add(cursor)
-        return ServerSnapshot(server_id=self.server_id, tools=tools,
-                              catalog_fingerprint=compute_catalog_fingerprint(tools))
+
+            # 3. Discover Resources (distinguishing empty vs unsupported vs error)
+            if hasattr(session, "list_resources"):
+                try:
+                    res_page = await session.list_resources()
+                    res_items = []
+                    for r in getattr(res_page, "resources", []):
+                        r_data = r.model_dump() if hasattr(r, "model_dump") else (r if isinstance(r, dict) else str(r))
+                        res_items.append(r_data)
+                    resources_dict = {
+                        "status": "OK" if res_items else "EMPTY",
+                        "items": res_items,
+                    }
+                except Exception as e:
+                    resources_dict = {
+                        "status": "UNSUPPORTED" if "not supported" in str(e).lower() or "method not found" in str(e).lower() else "ERROR",
+                        "error": str(e),
+                        "items": [],
+                    }
+
+            # 4. Discover Prompts (distinguishing empty vs unsupported vs error)
+            if hasattr(session, "list_prompts"):
+                try:
+                    prompt_page = await session.list_prompts()
+                    prompt_items = []
+                    for p in getattr(prompt_page, "prompts", []):
+                        p_data = p.model_dump() if hasattr(p, "model_dump") else (p if isinstance(p, dict) else str(p))
+                        prompt_items.append(p_data)
+                    prompts_dict = {
+                        "status": "OK" if prompt_items else "EMPTY",
+                        "items": prompt_items,
+                    }
+                except Exception as e:
+                    prompts_dict = {
+                        "status": "UNSUPPORTED" if "not supported" in str(e).lower() or "method not found" in str(e).lower() else "ERROR",
+                        "error": str(e),
+                        "items": [],
+                    }
+
+        tools_fp = compute_catalog_fingerprint(tools)
+        import hashlib
+        from auditforge.core.contracts import canonical_json
+        res_fp = hashlib.sha256(canonical_json(resources_dict).encode("utf-8")).hexdigest()
+        prompts_fp = hashlib.sha256(canonical_json(prompts_dict).encode("utf-8")).hexdigest()
+
+        return ServerSnapshot(
+            server_id=self.server_id,
+            tools=tools,
+            resources=resources_dict,
+            prompts=prompts_dict,
+            capabilities=capabilities,
+            tools_fingerprint=tools_fp,
+            resources_fingerprint=res_fp,
+            prompts_fingerprint=prompts_fp,
+            catalog_fingerprint=tools_fp,
+        )
 
     async def call_tool(self, name: str, arguments: dict):
         """Make a real call in a fresh session and return the full SDK result.
@@ -100,7 +170,24 @@ class MCPCatalogClient:
                 tools_dict[norm.name] = norm
 
         sid = server_id or data.get("server_id", path.stem)
+        resources_dict = data.get("resources", {"status": "EMPTY", "items": []})
+        prompts_dict = data.get("prompts", {"status": "EMPTY", "items": []})
+        capabilities = data.get("capabilities", {})
+        
+        tools_fp = compute_catalog_fingerprint(tools_dict)
+        import hashlib
+        from auditforge.core.contracts import canonical_json
+        res_fp = hashlib.sha256(canonical_json(resources_dict).encode("utf-8")).hexdigest()
+        prompts_fp = hashlib.sha256(canonical_json(prompts_dict).encode("utf-8")).hexdigest()
+
         return ServerSnapshot(
             server_id=sid,
             tools=tools_dict,
+            resources=resources_dict,
+            prompts=prompts_dict,
+            capabilities=capabilities,
+            tools_fingerprint=tools_fp,
+            resources_fingerprint=res_fp,
+            prompts_fingerprint=prompts_fp,
+            catalog_fingerprint=tools_fp,
         )

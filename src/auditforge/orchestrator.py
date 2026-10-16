@@ -21,6 +21,7 @@ from auditforge.core.contracts import (
     EvidenceRecord,
     Finding,
     ProbeOutcome,
+    ProbeStatus,
     ScanResult,
     ServerSnapshot,
     Severity,
@@ -32,6 +33,31 @@ from auditforge.reports.markdown import generate_markdown_report
 from auditforge.sandbox.probe_cases import generate_probe_cases
 from auditforge.sandbox.runner import DockerSandboxRunner
 from auditforge.storage.database import Database
+
+
+def aggregate_probe_outcomes(probe_outcomes: List[ProbeOutcome]) -> str:
+    """Explicitly aggregate dynamic probe outcomes into stage coverage.
+
+    Ensures TOOL_ERROR, TIMEOUT, UNKNOWN, and SKIPPED cannot silently count as PASS.
+    """
+    if not probe_outcomes:
+        return "SKIPPED"
+
+    statuses = {p.status for p in probe_outcomes}
+
+    # If any probe encountered an execution error, timeout, or unknown state, report ERROR
+    if any(s in {ProbeStatus.TOOL_ERROR, ProbeStatus.TIMEOUT, ProbeStatus.UNKNOWN} for s in statuses):
+        return "ERROR"
+
+    # If any probe was skipped (and none errored), report SKIPPED
+    if any(s == ProbeStatus.SKIPPED for s in statuses):
+        return "SKIPPED"
+
+    # Only if every probe completed with OK, report PASS
+    if all(s == ProbeStatus.OK for s in statuses):
+        return "PASS"
+
+    return "UNKNOWN"
 
 
 class ScanOrchestrator:
@@ -78,7 +104,9 @@ class ScanOrchestrator:
             "static_ast": "UNKNOWN",
             "description_intelligence": "UNKNOWN",
             "dynamic_probing": "UNKNOWN",
+            "trust_gap": "UNKNOWN",
             "baseline_pinning": "UNKNOWN",
+            "evidence_sealing": "UNKNOWN",
         }
 
         # 1. Resolve Target Inputs & MCP Catalog Discovery
@@ -210,12 +238,7 @@ class ScanOrchestrator:
                                     remediation="Remove external subprocess or network invocations from tool handler.",
                                     )
                                 all_findings.append(fnd)
-                if any(p.status.value in {"ERROR", "FAILED"} for p in probe_outcomes):
-                    stage_coverage["dynamic_probing"] = "ERROR"
-                elif any(p.status.value == "SKIPPED" for p in probe_outcomes):
-                    stage_coverage["dynamic_probing"] = "SKIPPED"
-                else:
-                    stage_coverage["dynamic_probing"] = "PASS"
+                stage_coverage["dynamic_probing"] = aggregate_probe_outcomes(probe_outcomes)
             except Exception as exc:
                 # Record probe failure
                 ev_id = generate_evidence_id("sandbox_error", {"target": target})
@@ -256,6 +279,17 @@ class ScanOrchestrator:
         )
         all_findings.extend(gap_findings)
         all_evidence.extend(gap_evidence)
+        if gap_findings:
+            stage_coverage["trust_gap"] = "TRUST_GAP_FLAGGED"
+        elif snapshot:
+            stage_coverage["trust_gap"] = "PASS"
+        else:
+            stage_coverage["trust_gap"] = "SKIPPED"
+
+        if all_evidence:
+            stage_coverage["evidence_sealing"] = "PASS"
+        else:
+            stage_coverage["evidence_sealing"] = "EMPTY"
 
         # 7. Generate Executive Summary
         crit_count = sum(1 for f in all_findings if f.severity == Severity.CRITICAL)

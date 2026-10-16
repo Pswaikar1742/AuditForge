@@ -28,18 +28,19 @@
 | **8-Target Benchmark Harness (`benchmarks/`)** | `feat/sandbox-prober-fixtures` (Codex 2) | `TESTED` | `tests/benchmarks/test_benchmark_targets.py` (17/17 PASS, Official & Appsecco targets) |
 | **JSON Evidence Capsules Exporter (`json_report.py`)** | `develop` | `TESTED` | `tests/unit/test_reports.py` (JSON capsule export) |
 | **Markdown Report Generator (`markdown.py`)** | `develop` | `TESTED` | `tests/unit/test_reports.py` (Markdown generation) |
-| **FastAPI REST Application (`api/app.py`)** | `develop` | `TESTED` | `tests/unit/test_api.py` (10/10 PASS, target allowlisting, live stdio rug-pull `/api/demo/rug-pull`, report export) |
-| **React Mission Control Dashboard (`dashboard/`)** | `develop` | `TESTED` | `npm run build` compiles clean production bundle in 2.44s (Vite + React + Lucide, live rug-pull & patched chips) |
+| **FastAPI REST Application (`api/app.py`)** | `develop` | `TESTED` | `tests/unit/test_api.py` (14/14 PASS, target allowlisting, live stdio rug-pull `/api/demo/rug-pull`, approval protection, report export) |
+| **React Mission Control Dashboard (`dashboard/`)** | `develop` | `TESTED` | `npm run build` compiles clean production bundle in 2.62s (Vite + React + Lucide, live rug-pull diff, category badges, safe target picker) |
 | **CLI Doctor & Tooling (`cli.py`)** | `develop` | `TESTED` | `python -m auditforge.cli doctor` (All 6 checks PASS) |
-| **End-to-End Orchestrator (`orchestrator.py`)** | `develop` | `TESTED` | `python -m auditforge.cli demo` (5/5 Stages PASS, honest coverage accounting) |
+| **End-to-End Orchestrator (`orchestrator.py`)** | `develop` | `TESTED` | `python -m auditforge.cli demo` (5/5 Stages PASS, explicit probe status aggregation: TOOL_ERROR/TIMEOUT/UNKNOWN/SKIPPED cannot silently count as PASS) |
 
 ---
 
 ## 🔍 Provenance & Acceptance Verdict
-- **58 / 58 Automated Tests Passing:** 30 unit tests, 11 integration tests (including 3 vulnerable/patched pair validations), 17 benchmark tests passing across the entire repository.
+- **63 / 63 Automated Tests Passing:** 34 unit tests, 12 integration tests (live stdio tool calls on all 8 fixtures and 3 vulnerable/patched pair validations), 17 benchmark tests passing across the entire repository.
 - **Zero Mock Results:** All dynamic tests run through real Docker containers (`auditforge-probe:latest` and `auditforge-mcp-test:2.3.0`).
 - **Authentic Vulnerable-to-Patched Acceptance Pairs:** `rogue_server` vs `rogue_server_patched`, `poisoned_description` vs `poisoned_description_patched`, `lying_annotations` vs `lying_annotations_patched` prove remediation without breaking legitimate utility.
 - **Live Stdio Rug-Pull Endpoint:** `/api/demo/rug-pull` executes real stdio MCP processes under `--version 1` and `--version 2`, proving field-level drift detection dynamically.
-- **Safe Target Allowlisting & Injected DB:** Web requests cannot invoke arbitrary host commands or arbitrary filesystem paths; database instances can be injected safely.
+- **Explicit Probe Aggregation:** Dynamic probe status evaluation explicitly checks `ProbeStatus` enum (`OK`, `TOOL_ERROR`, `TIMEOUT`, `SKIPPED`, `UNKNOWN`); errors and timeouts cannot silently report `PASS`.
+- **Approval Protection & Baseline Preservation:** Existing baselines are strictly preserved by default; known vulnerable servers (`rogue_server`, `poisoned_description`, `lying_annotations`) cannot be approved without explicit force override.
 - **Interactive UI & Safe API:** Full FastAPI endpoints documented in `docs/API_CONTRACT.md` for human teammate Shlok; Vite React dashboard with live metrics, quick scenarios, and pin-and-diff inspector.
 - **Truth-in-Reporting Accounting:** Missing baselines report `NOT_PINNED`, LLM timeouts report `ERROR`/`SKIPPED`, and static findings remain strictly `SOURCE_INDICATOR`.

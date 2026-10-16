@@ -82,23 +82,44 @@ class Database:
             """)
             conn.commit()
 
-    def save_baseline(self, snapshot: ServerSnapshot) -> None:
-        """Insert an explicitly approved baseline; preserve any existing approval."""
+    def save_baseline(self, snapshot: ServerSnapshot, overwrite: bool = False) -> bool:
+        """Insert an explicitly approved baseline; preserve any existing approval unless overwrite is True.
+
+        Returns True if a new baseline was inserted or overwritten,
+        False if an existing baseline already existed and was preserved.
+        """
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                """
-                INSERT OR IGNORE INTO baselines (server_id, catalog_fingerprint, snapshot_json, created_at)
-                VALUES (?, ?, ?, ?)
-                """,
-                (
-                    snapshot.server_id,
-                    snapshot.catalog_fingerprint,
-                    canonical_json(snapshot.model_dump(mode="json")),
-                    snapshot.timestamp,
-                ),
-            )
-            conn.commit()
+            if overwrite:
+                cursor.execute(
+                    """
+                    INSERT OR REPLACE INTO baselines (server_id, catalog_fingerprint, snapshot_json, created_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        snapshot.server_id,
+                        snapshot.catalog_fingerprint,
+                        canonical_json(snapshot.model_dump(mode="json")),
+                        snapshot.timestamp,
+                    ),
+                )
+                conn.commit()
+                return True
+            else:
+                cursor.execute(
+                    """
+                    INSERT OR IGNORE INTO baselines (server_id, catalog_fingerprint, snapshot_json, created_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        snapshot.server_id,
+                        snapshot.catalog_fingerprint,
+                        canonical_json(snapshot.model_dump(mode="json")),
+                        snapshot.timestamp,
+                    ),
+                )
+                conn.commit()
+                return cursor.rowcount > 0
 
     def get_baseline(self, server_id: str) -> Optional[ServerSnapshot]:
         """Retrieve baseline snapshot for server_id if it exists."""
@@ -209,13 +230,26 @@ class Database:
             return results
 
     def list_baselines(self) -> List[Dict[str, Any]]:
-        """List all pinned baselines."""
+        """List all pinned baselines with complete field aliases."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT server_id as server_name, catalog_fingerprint as catalog_hash, 'APPROVED' as trust_state, 'admin' as approved_by, created_at as approved_at, snapshot_json FROM baselines ORDER BY created_at DESC"
+                "SELECT server_id, server_id as server_name, catalog_fingerprint, catalog_fingerprint as catalog_hash, 'APPROVED' as trust_state, 'admin' as approved_by, created_at, created_at as approved_at, created_at as timestamp, snapshot_json FROM baselines ORDER BY created_at DESC"
             )
-            return [dict(r) for r in cursor.fetchall()]
+            rows = cursor.fetchall()
+            results = []
+            for r in rows:
+                item = dict(r)
+                if item.get("snapshot_json"):
+                    try:
+                        snap = json.loads(item["snapshot_json"])
+                        item["tool_count"] = len(snap.get("tools", {}))
+                    except Exception:
+                        item["tool_count"] = 0
+                else:
+                    item["tool_count"] = 0
+                results.append(item)
+            return results
 
     def get_stats(self) -> Dict[str, Any]:
         """Aggregate security statistics."""
