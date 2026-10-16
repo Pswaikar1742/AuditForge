@@ -6,7 +6,7 @@
 **Track:** Open Weight AI & Open Source Tools  
 **Judging Milestone:** Round 1 Checkpoint (1:00 PM IST Evaluation | Checkpoint Frozen at 12:30 PM IST)  
 **Active Integration Branch:** `develop`  
-**Verified Demonstration Commit SHA:** `2248744b1c7ba1465ea4e47a9e7f78cb47a505b3`  
+**Verified Demonstration Commit SHA:** `afc0dfa` on `develop`  
 **Foundation Anchor SHA:** `1a7ee601a3b88faa3c100711d5fab61567a6ed04`  
 
 ---
