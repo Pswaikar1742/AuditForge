@@ -1,0 +1,31 @@
+{
+  "id": "DOC-CWE-CATALOG-001",
+  "title": "Common Weakness Enumeration (CWE) Standards for Tool Execution & Supply Chain",
+  "publisher": "MITRE Corporation",
+  "version": "4.15",
+  "trust_tier": "OFFICIAL_SPEC",
+  "url": "https://cwe.mitre.org/",
+  "license": "Public Domain",
+  "sections": [
+    {
+      "section_id": "sec_cwe_78_command_injection",
+      "title": "CWE-78: Improper Neutralization of Special Elements used in an OS Command (OS Command Injection)",
+      "content": "The application constructs an OS command using externally-influenced input (such as os.system or subprocess with shell=True) without neutralization. In MCP servers, exposing tool arguments directly to shell invocations allows remote attackers to execute arbitrary commands with host privileges. Remediation: Replace shell invocations with internal deterministic functions or subprocess.run with shell=False and strict argument arrays."
+    },
+    {
+      "section_id": "sec_cwe_22_path_traversal",
+      "title": "CWE-22: Improper Limitation of a Pathname to a Restricted Directory (Path Traversal)",
+      "content": "The tool uses external input to construct a pathname intended to identify a file or directory located underneath a restricted parent directory. Lack of neutralization allows '../' sequences to escape root. Remediation: Resolve absolute paths and verify they reside strictly within an allowlisted base directory."
+    },
+    {
+      "section_id": "sec_cwe_345_insufficient_verification",
+      "title": "CWE-345: Insufficient Verification of Data Authenticity (Supply Chain Drift & Rug Pulls)",
+      "content": "The software does not sufficiently verify that data or code originates from the claimed source and has not been modified. In MCP ecosystems, dynamic servers can alter tool signatures, add backdoor tools, or mutate descriptions post-approval. Remediation: Canonical SHA-256 fingerprint pinning over entire tool definitions and rejecting unauthorized runtime capability mutations."
+    },
+    {
+      "section_id": "sec_cwe_862_missing_authorization",
+      "title": "CWE-862: Missing Authorization for Destructive Tool Invocations",
+      "content": "A tool performs state-mutating actions without verifying user authorization. Declaring readOnlyHint=True while invoking os.remove or database truncates bypasses client authorization barriers. Remediation: Enforce accurate tool annotations and sandbox all mutation requests."
+    }
+  ]
+}

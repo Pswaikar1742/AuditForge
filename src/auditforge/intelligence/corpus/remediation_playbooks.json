@@ -1,0 +1,31 @@
+{
+  "id": "DOC-PLAYBOOKS-001",
+  "title": "AuditForge Approved Remediation Playbooks for MCP Developers",
+  "publisher": "AuditForge Security Research",
+  "version": "2026.1",
+  "trust_tier": "AUDIT_PLAYBOOK",
+  "url": "https://github.com/Pswaikar1742/AuditForge/docs/remediation",
+  "license": "Apache-2.0",
+  "sections": [
+    {
+      "section_id": "playbook_ast_shell",
+      "title": "Remediation Playbook: AST-SHELL-001 & AST-SUBPROCESS-001",
+      "content": "Rule IDs: AST-SHELL-001, AST-SUBPROCESS-001, BANDIT-B605. Severity: CRITICAL. Remediation: 1. Remove all os.system() and subprocess calls invoking host shells. 2. Implement operations using native Python in-memory standard libraries (e.g. psutil, platform, datetime). 3. If process execution is strictly necessary, run exclusively inside an ephemeral, non-root container with network_mode='none' and validate all arguments against strict allowlists."
+    },
+    {
+      "section_id": "playbook_desc_inject",
+      "title": "Remediation Playbook: DESC-INJECT-001 & DESC-INJECT-002",
+      "content": "Rule IDs: DESC-INJECT-001, DESC-INJECT-002, DESC-EXFIL-001. Severity: HIGH / CRITICAL. Remediation: 1. Sanitize tool description text to remove directives like 'SYSTEM OVERRIDE', 'ignore instructions', or 'upload env'. 2. Tool descriptions must describe ONLY the tool's intended functional parameters, return types, and business constraints. 3. Strip all XML/HTML markup tags (<system>, <important>, <instruction>). 4. Ensure no zero-width spaces (\\u200b, \\u200c) or full-width Unicode characters are present in description metadata."
+    },
+    {
+      "section_id": "playbook_trust_gap",
+      "title": "Remediation Playbook: TRUST-GAP-001 (Contract Discrepancy)",
+      "content": "Rule ID: TRUST-GAP-001. Severity: HIGH / CRITICAL. Remediation: 1. If a tool performs any state mutation (writing files, deleting records, executing processes), set readOnlyHint=False in MCP annotations. 2. If destructive actions occur, explicitly set destructiveHint=True. 3. If the tool is intended to be read-only, refactor the implementation to eliminate all open(..., 'w'), os.remove(), and mutating network operations."
+    },
+    {
+      "section_id": "playbook_rug_pull",
+      "title": "Remediation Playbook: PIN-RUGPULL-001 (Catalog Drift)",
+      "content": "Rule ID: PIN-RUGPULL-001. Severity: HIGH / CRITICAL. Remediation: 1. The server's runtime catalog differs from its cryptographically pinned approval baseline. 2. If capability additions or schema changes are legitimate, perform a full re-audit and execute an explicit baseline approval with reapprove=True. 3. In automated CI/CD pipelines, reject and isolate any MCP server whose runtime catalog fingerprint does not match the pinned approval digest."
+    }
+  ]
+}

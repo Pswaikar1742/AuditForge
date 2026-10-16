@@ -80,6 +80,22 @@ class Database:
                     FOREIGN KEY (scan_id) REFERENCES scans (scan_id)
                 )
             """)
+
+            # Asynchronous jobs tracking
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS jobs (
+                    job_id TEXT PRIMARY KEY,
+                    target TEXT NOT NULL,
+                    scan_type TEXT NOT NULL DEFAULT 'LIVE_SCAN',
+                    status TEXT NOT NULL DEFAULT 'QUEUED',
+                    created_at TEXT NOT NULL,
+                    started_at TEXT,
+                    completed_at TEXT,
+                    error TEXT,
+                    scan_id TEXT,
+                    FOREIGN KEY (scan_id) REFERENCES scans (scan_id)
+                )
+            """)
             conn.commit()
 
     def save_baseline(self, snapshot: ServerSnapshot, overwrite: bool = False) -> bool:
@@ -264,4 +280,86 @@ class Database:
                 "total_baselines": base_cnt,
                 "findings_by_severity": sev_map,
             }
+
+    # Asynchronous Job Tracking Methods
+    def create_job(self, job_id: str, target: str, scan_type: str = "LIVE_SCAN") -> Dict[str, Any]:
+        """Record a newly queued asynchronous scan job."""
+        from datetime import datetime, timezone
+        created_at = datetime.now(timezone.utc).isoformat()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO jobs (job_id, target, scan_type, status, created_at)
+                VALUES (?, ?, ?, 'QUEUED', ?)
+                """,
+                (job_id, target, scan_type, created_at),
+            )
+            conn.commit()
+            return {
+                "job_id": job_id,
+                "target": target,
+                "scan_type": scan_type,
+                "status": "QUEUED",
+                "created_at": created_at,
+                "started_at": None,
+                "completed_at": None,
+                "error": None,
+                "scan_id": None,
+            }
+
+    def update_job(
+        self,
+        job_id: str,
+        status: str,
+        scan_id: Optional[str] = None,
+        error: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Update the status, timing, and results of an existing job."""
+        from datetime import datetime, timezone
+        now_str = datetime.now(timezone.utc).isoformat()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            if status == "RUNNING":
+                cursor.execute(
+                    "UPDATE jobs SET status = ?, started_at = COALESCE(started_at, ?) WHERE job_id = ?",
+                    (status, now_str, job_id),
+                )
+            elif status in ("SUCCEEDED", "FAILED", "CANCELLED"):
+                cursor.execute(
+                    "UPDATE jobs SET status = ?, completed_at = ?, scan_id = COALESCE(?, scan_id), error = COALESCE(?, error) WHERE job_id = ?",
+                    (status, now_str, scan_id, error, job_id),
+                )
+            else:
+                cursor.execute("UPDATE jobs SET status = ? WHERE job_id = ?", (status, job_id))
+            conn.commit()
+            return self.get_job(job_id)
+
+    def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve job record by ID."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM jobs WHERE job_id = ?", (job_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def list_jobs(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """List recent jobs ordered by creation timestamp."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,))
+            return [dict(r) for r in cursor.fetchall()]
+
+    def cancel_job(self, job_id: str) -> bool:
+        """Cancel a queued or running job."""
+        from datetime import datetime, timezone
+        now_str = datetime.now(timezone.utc).isoformat()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE jobs SET status = 'CANCELLED', completed_at = ? WHERE job_id = ? AND status IN ('QUEUED', 'RUNNING')",
+                (now_str, job_id),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
 

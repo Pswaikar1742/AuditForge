@@ -44,6 +44,27 @@ export default function App() {
   const [pairComparisonResult, setPairComparisonResult] = useState(null);
   const [loadingComparison, setLoadingComparison] = useState(false);
 
+  // Milestone 2 & 3: Intelligence & Job Queue States
+  const [intelligenceStatus, setIntelligenceStatus] = useState(null);
+  const [intelligenceSources, setIntelligenceSources] = useState([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchTrustTier, setSearchTrustTier] = useState('ALL');
+  const [searchResults, setSearchResults] = useState([]);
+  const [searchingIntel, setSearchingIntel] = useState(false);
+  const [findingToExplain, setFindingToExplain] = useState(null);
+  const [findingExplanation, setFindingExplanation] = useState(null);
+  const [explainingFinding, setExplainingFinding] = useState(false);
+  const [explainUseLlm, setExplainUseLlm] = useState(false);
+
+  const [jobList, setJobList] = useState([]);
+  const [queueMetrics, setQueueMetrics] = useState(null);
+  const [loadingJobs, setLoadingJobs] = useState(false);
+  const [selectedJobTarget, setSelectedJobTarget] = useState('fixtures/clean_reader');
+
+  const [savedReports, setSavedReports] = useState([]);
+  const [viewingReport, setViewingReport] = useState(null);
+  const [loadingReportContent, setLoadingReportContent] = useState(false);
+
   useEffect(() => {
     checkHealth();
     fetchStats();
@@ -52,7 +73,14 @@ export default function App() {
     fetchFixtures();
     fetchKoalaAssurance();
     fetchComparisonPairs();
-    const interval = setInterval(checkHealth, 5000);
+    fetchIntelligenceStatus();
+    fetchIntelligenceSources();
+    fetchJobs();
+    fetchSavedReports();
+    const interval = setInterval(() => {
+      checkHealth();
+      fetchJobs();
+    }, 5000);
     return () => clearInterval(interval);
   }, []);
 
@@ -95,6 +123,12 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         setSelectedScan(data);
+        if (data.server_name) {
+          setTargetName(data.server_name);
+        }
+        if (data.target) {
+          setCustomPath(data.target);
+        }
       }
     } catch (e) {
       console.error(e);
@@ -192,8 +226,150 @@ export default function App() {
     }
   };
 
+  const fetchIntelligenceStatus = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/intelligence/status`);
+      if (res.ok) setIntelligenceStatus(await res.json());
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const fetchIntelligenceSources = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/intelligence/sources`);
+      if (res.ok) setIntelligenceSources(await res.json());
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const fetchSavedReports = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/reports`);
+      if (res.ok) {
+        const data = await res.json();
+        setSavedReports(data);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const openReportViewer = async (filename) => {
+    setLoadingReportContent(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/reports/${filename}`);
+      if (res.ok) {
+        const text = await res.text();
+        setViewingReport({ filename, content: text });
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoadingReportContent(false);
+    }
+  };
+
+  const searchKnowledgeBase = async (queryToSearch) => {
+    const q = queryToSearch || searchQuery;
+    if (!q || !q.trim()) return;
+    setSearchingIntel(true);
+    try {
+      const body = { query: q, top_k: 6 };
+      if (searchTrustTier !== 'ALL') body.trust_tier = searchTrustTier;
+      const res = await fetch(`${API_BASE}/api/intelligence/search`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSearchResults(data.results || []);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setSearchingIntel(false);
+    }
+  };
+
+  const handleExplainFinding = async (finding, useLlmFlag = false) => {
+    setFindingToExplain(finding);
+    setActiveTab('intelligence');
+    setExplainingFinding(true);
+    setFindingExplanation(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/intelligence/explain-finding`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ finding, use_llm: useLlmFlag }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setFindingExplanation(data);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setExplainingFinding(false);
+    }
+  };
+
+  const fetchJobs = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/jobs`);
+      if (res.ok) {
+        const data = await res.json();
+        setJobList(data.jobs || []);
+        setQueueMetrics(data.metrics || null);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const submitAsyncScanJob = async (target) => {
+    const tgt = target || selectedJobTarget;
+    setLoadingJobs(true);
+    setStatusMsg(`Submitting asynchronous scan job for '${tgt}'...`);
+    try {
+      const res = await fetch(`${API_BASE}/api/jobs/scans`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target: tgt, scan_type: 'LIVE_SCAN', use_llm: useLlm }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setStatusMsg(`✔ Job ${data.job_id} enqueued successfully (${data.status})`);
+        fetchJobs();
+      } else {
+        const err = await res.json();
+        setStatusMsg(`Job submission failed: ${err.detail || 'Unknown error'}`);
+      }
+    } catch (e) {
+      setStatusMsg(`Job submission error: ${e.message}`);
+    } finally {
+      setLoadingJobs(false);
+    }
+  };
+
+  const cancelJob = async (jobId) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/jobs/${jobId}/cancel`, { method: 'POST' });
+      if (res.ok) {
+        setStatusMsg(`Job ${jobId} cancelled.`);
+        fetchJobs();
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   const runScan = async (path, name) => {
     setLoading(true);
+    setDiffResult(null);
+    setExpandedFinding(null);
     setStatusMsg(`Running security audit on ${name || path}${useLlm ? ' (with Qwen AI heuristics)' : ''}...`);
     try {
       const res = await fetch(`${API_BASE}/api/scan`, {
@@ -212,6 +388,7 @@ export default function App() {
         setStatusMsg(`✔ Scan completed for ${data.server_name || name}. Trust State: ${data.trust_state}`);
         fetchStats();
         fetchScans();
+        fetchSavedReports();
       } else {
         const err = await res.json();
         setStatusMsg(`Scan failed: ${err.detail || 'Unknown error'}`);
@@ -443,6 +620,8 @@ export default function App() {
             { id: 'diff', label: 'Vulnerable vs Patched Diff', icon: ShieldAlert },
             { id: 'findings', label: `Evidence Vault (${selectedScan?.findings?.length || 0})`, icon: Layers },
             { id: 'baselines', label: `Baselines & Drift (${baselines.length})`, icon: Database },
+            { id: 'intelligence', label: 'Security Intelligence (RAG)', icon: Zap },
+            { id: 'jobs', label: `Jobs & Queue (${jobList.length})`, icon: RefreshCw },
             { id: 'assurance', label: 'Model Assurance (KOALA)', icon: Lock },
             { id: 'architecture', label: 'Architecture & USPs', icon: Cpu },
           ].map(tab => {
@@ -1012,12 +1191,18 @@ export default function App() {
                     value={targetName}
                     onChange={(e) => {
                       const selected = fixtures.find(f => f.id === e.target.value);
-                      if (selected) {
-                        setTargetName(selected.id);
-                        setCustomPath(selected.path);
+                      const newId = selected ? selected.id : e.target.value;
+                      const newPath = selected ? selected.path : `fixtures/${e.target.value}`;
+                      setTargetName(newId);
+                      setCustomPath(newPath);
+                      setDiffResult(null);
+                      setExpandedFinding(null);
+
+                      const existing = scans.find(s => s.server_name === newId || s.server_name === newPath || s.target === newPath);
+                      if (existing) {
+                        fetchScanDetails(existing.id || existing.scan_id);
                       } else {
-                        setTargetName(e.target.value);
-                        setCustomPath(`fixtures/${e.target.value}`);
+                        runScan(newPath, newId);
                       }
                     }}
                     style={{
@@ -1206,7 +1391,7 @@ export default function App() {
               )}
 
               {/* Vulnerable-versus-Patched / Diff Result Box */}
-              {diffResult && (
+              {diffResult && (diffResult.server_id === targetName || diffResult.server_id === customPath || !targetName) && (
                 <div style={{
                   marginTop: '1.25rem',
                   padding: '1.25rem',
@@ -1219,7 +1404,15 @@ export default function App() {
                       {diffResult.is_identical ? <CheckCircle size={18} /> : <AlertTriangle size={18} />}
                       {diffResult.is_identical ? 'Catalog Identical to Pinned Baseline (0 Drift)' : `⚠ Supply Chain Drift: ${diffResult.drift_category || 'HIGH_RISK_DRIFT'} (PIN-RUGPULL-001)`}
                     </strong>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Target: <strong>{diffResult.server_id}</strong></span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Target: <strong>{diffResult.server_id}</strong></span>
+                      <button
+                        onClick={() => setDiffResult(null)}
+                        style={{ background: 'transparent', border: '1px solid var(--border-subtle)', borderRadius: '4px', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.75rem', padding: '0.2rem 0.5rem' }}
+                      >
+                        ✕ Dismiss
+                      </button>
+                    </div>
                   </div>
 
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem', marginBottom: '1rem' }}>
@@ -1396,6 +1589,27 @@ export default function App() {
                                     )}
                                   </div>
                                 ))}
+                              </div>
+                              <div style={{ marginTop: '0.75rem', display: 'flex', justifyContent: 'flex-end' }}>
+                                <button
+                                  className="btn btn-secondary"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleExplainFinding(f);
+                                  }}
+                                  style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '0.4rem',
+                                    padding: '0.35rem 0.75rem',
+                                    fontSize: '0.75rem',
+                                    borderColor: 'rgba(249, 115, 22, 0.4)',
+                                    color: '#F97316',
+                                  }}
+                                >
+                                  <Zap size={13} color="#F97316" />
+                                  Explain Finding with RAG Intelligence
+                                </button>
                               </div>
                             </div>
                           )}
@@ -1727,6 +1941,175 @@ export default function App() {
                 </div>
               ))}
             </div>
+
+            {/* Saved Markdown Reports Section */}
+            <div className="glass-panel" style={{ marginTop: '2rem', padding: '1.5rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                  <FileCode size={18} color="#38BDF8" />
+                  <h3 style={{ fontSize: '1.05rem', fontWeight: '800' }}>
+                    Saved Markdown Audit Reports ({savedReports.length})
+                  </h3>
+                </div>
+                <button
+                  className="btn btn-secondary"
+                  onClick={fetchSavedReports}
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.75rem', padding: '0.35rem 0.75rem' }}
+                >
+                  <RefreshCw size={13} /> Refresh Reports
+                </button>
+              </div>
+
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
+                Permanent, self-contained Markdown audit reports generated in <code>scan_reports/</code>. Every report encapsulates AST findings, dynamic probe telemetry, and evidence verification digests.
+              </p>
+
+              {savedReports.length === 0 ? (
+                <div style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                  No saved markdown reports found. Run an audit to generate a self-contained report.
+                </div>
+              ) : (
+                <div style={{ maxHeight: '380px', overflowY: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.8rem' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
+                        <th style={{ padding: '0.6rem' }}>REPORT FILENAME</th>
+                        <th style={{ padding: '0.6rem' }}>SCAN ID</th>
+                        <th style={{ padding: '0.6rem' }}>SIZE</th>
+                        <th style={{ padding: '0.6rem' }}>LAST MODIFIED</th>
+                        <th style={{ padding: '0.6rem' }}>ACTIONS</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {savedReports.slice(0, 25).map(rep => (
+                        <tr key={rep.filename} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                          <td style={{ padding: '0.6rem', fontFamily: 'var(--font-mono)', color: '#38BDF8', fontWeight: '700' }}>
+                            {rep.filename}
+                          </td>
+                          <td style={{ padding: '0.6rem', fontFamily: 'var(--font-mono)', color: '#CBD5E1' }}>
+                            {rep.scan_id}
+                          </td>
+                          <td style={{ padding: '0.6rem', color: 'var(--text-muted)' }}>
+                            {(rep.size_bytes / 1024).toFixed(1)} KB
+                          </td>
+                          <td style={{ padding: '0.6rem', color: 'var(--text-muted)' }}>
+                            {rep.modified_at ? new Date(rep.modified_at * 1000).toLocaleString() : 'N/A'}
+                          </td>
+                          <td style={{ padding: '0.6rem' }}>
+                            <div style={{ display: 'flex', gap: '0.4rem' }}>
+                              <button
+                                className="btn btn-secondary"
+                                onClick={() => openReportViewer(rep.filename)}
+                                style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem', borderColor: 'rgba(56, 189, 248, 0.4)', color: '#38BDF8' }}
+                              >
+                                View Report
+                              </button>
+                              <a
+                                href={`${API_BASE}/api/reports/${rep.filename}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                style={{
+                                  padding: '0.2rem 0.5rem',
+                                  fontSize: '0.75rem',
+                                  borderRadius: '6px',
+                                  background: 'rgba(255, 255, 255, 0.05)',
+                                  color: '#F8FAFC',
+                                  textDecoration: 'none',
+                                  border: '1px solid var(--border-subtle)',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '0.2rem',
+                                }}
+                              >
+                                Raw <ExternalLink size={10} />
+                              </a>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Markdown Report Modal Viewer */}
+            {viewingReport && (
+              <div style={{
+                position: 'fixed',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                background: 'rgba(0, 0, 0, 0.85)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                zIndex: 1000,
+                padding: '2rem',
+              }}>
+                <div style={{
+                  background: '#07090E',
+                  borderRadius: '12px',
+                  border: '1px solid rgba(56, 189, 248, 0.4)',
+                  width: '90%',
+                  maxWidth: '900px',
+                  maxHeight: '85vh',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  overflow: 'hidden',
+                  boxShadow: '0 20px 50px rgba(0, 0, 0, 0.8)',
+                }}>
+                  <div style={{
+                    padding: '1rem 1.5rem',
+                    borderBottom: '1px solid var(--border-subtle)',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    background: '#0B0F19',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                      <FileCode size={18} color="#38BDF8" />
+                      <strong style={{ color: '#F8FAFC', fontFamily: 'var(--font-mono)' }}>{viewingReport.filename}</strong>
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      <a
+                        href={`${API_BASE}/api/reports/${viewingReport.filename}`}
+                        download={viewingReport.filename}
+                        className="btn btn-secondary"
+                        style={{ padding: '0.3rem 0.75rem', fontSize: '0.75rem', textDecoration: 'none' }}
+                      >
+                        Download .md
+                      </a>
+                      <button
+                        className="btn btn-secondary"
+                        onClick={() => setViewingReport(null)}
+                        style={{ padding: '0.3rem 0.6rem', fontSize: '0.75rem' }}
+                      >
+                        ✕ Close
+                      </button>
+                    </div>
+                  </div>
+
+                  <div style={{ padding: '1.5rem', overflowY: 'auto', flex: 1 }}>
+                    <pre style={{
+                      margin: 0,
+                      padding: '1.25rem',
+                      background: '#030508',
+                      borderRadius: '8px',
+                      color: '#E2E8F0',
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: '0.85rem',
+                      whiteSpace: 'pre-wrap',
+                      lineHeight: 1.5,
+                      border: '1px solid rgba(255, 255, 255, 0.05)',
+                    }}>
+                      {viewingReport.content}
+                    </pre>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -1792,6 +2175,550 @@ export default function App() {
                   })}
                 </tbody>
               </table>
+            </div>
+          </div>
+        )}
+
+        {/* ═════════════════════════════════════════════════════════════ */}
+        {/* ── VIEW: SECURITY INTELLIGENCE (RAG KNOWLEDGE CORPUS) ─────── */}
+        {/* ═════════════════════════════════════════════════════════════ */}
+        {activeTab === 'intelligence' && (
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.5rem' }}>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.25rem' }}>
+                  <h2 style={{ fontSize: '1.25rem', fontWeight: '800' }}>Security Intelligence & RAG Explainer</h2>
+                  <span className="badge" style={{ background: 'rgba(249, 115, 22, 0.15)', color: '#F97316', border: '1px solid rgba(249, 115, 22, 0.3)' }}>
+                    Corpus v{intelligenceStatus?.corpus_version || '2026.1'}
+                  </span>
+                  <span className="badge" style={{ background: 'rgba(52, 211, 153, 0.15)', color: '#34D399', border: '1px solid rgba(52, 211, 153, 0.3)' }}>
+                    {intelligenceStatus?.status || 'ONLINE'}
+                  </span>
+                </div>
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', maxWidth: '900px' }}>
+                  Reconciles verified scanner findings against curated MCP specifications, OWASP LLM guidance, CWE taxonomy, and actionable remediation playbooks using hybrid BM25 and trust-tier ranking.
+                </p>
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.75rem' }}>
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => {
+                    fetchIntelligenceStatus();
+                    fetchIntelligenceSources();
+                  }}
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem' }}
+                >
+                  <RefreshCw size={14} /> Refresh Corpus
+                </button>
+              </div>
+            </div>
+
+            {/* Metrics Overview */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1.25rem', marginBottom: '2rem' }}>
+              <div className="glass-panel" style={{ padding: '1.25rem' }}>
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>RETRIEVAL ENGINE</span>
+                <div style={{ fontSize: '1.05rem', fontWeight: '700', color: '#F8FAFC', marginTop: '0.25rem' }}>Hybrid BM25</div>
+                <span style={{ fontSize: '0.7rem', color: '#34D399' }}>Trust-tier weighted (1.30x Spec)</span>
+              </div>
+              <div className="glass-panel" style={{ padding: '1.25rem' }}>
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>INGESTED SPECIFICATIONS</span>
+                <div style={{ fontSize: '1.25rem', fontWeight: '800', color: '#38BDF8', marginTop: '0.25rem' }}>
+                  {intelligenceStatus?.total_documents || intelligenceSources.length || 4} Documents
+                </div>
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>MCP, OWASP, CWE & Playbooks</span>
+              </div>
+              <div className="glass-panel" style={{ padding: '1.25rem' }}>
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>INDEXED KNOWLEDGE CHUNKS</span>
+                <div style={{ fontSize: '1.25rem', fontWeight: '800', color: '#A78BFA', marginTop: '0.25rem' }}>
+                  {intelligenceStatus?.total_chunks || 14} Chunks
+                </div>
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Deterministic SHA-256 sealed</span>
+              </div>
+              <div className="glass-panel" style={{ padding: '1.25rem' }}>
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>PROMPT QUARANTINE</span>
+                <div style={{ fontSize: '1.05rem', fontWeight: '700', color: '#34D399', marginTop: '0.25rem' }}>Enforced</div>
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Evidence isolated in &lt;untrusted&gt;</span>
+              </div>
+            </div>
+
+            {/* Section 1: Grounded Finding Explainer */}
+            <div className="glass-panel" style={{ padding: '1.75rem', marginBottom: '2rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '1rem' }}>
+                <Zap size={18} color="#F97316" />
+                <h3 style={{ fontSize: '1rem', fontWeight: '800' }}>Grounded Finding Explainer & Remediation Playbooks</h3>
+              </div>
+
+              {/* Finding Selector */}
+              <div style={{ background: 'rgba(0,0,0,0.2)', padding: '1rem', borderRadius: '8px', marginBottom: '1.25rem' }}>
+                {findingToExplain ? (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.3rem' }}>
+                        <span className={`badge badge-${(findingToExplain.severity || 'high').toLowerCase()}`}>
+                          {findingToExplain.severity}
+                        </span>
+                        <strong style={{ color: '#F8FAFC', fontFamily: 'var(--font-mono)' }}>{findingToExplain.rule_id}</strong>
+                        {findingToExplain.tool_name && (
+                          <span style={{ fontSize: '0.8rem', color: '#94A3B8' }}>Tool: {findingToExplain.tool_name}</span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: '0.85rem', color: '#CBD5E1' }}>{findingToExplain.reason}</div>
+                    </div>
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => setFindingToExplain(null)}
+                      style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem' }}
+                    >
+                      Clear Selection
+                    </button>
+                  </div>
+                ) : (
+                  <div>
+                    <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
+                      Select a standard vulnerability archetype to explain, or click "Explain Finding" from any scan finding:
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                      {[
+                        { rule_id: 'AST-SHELL-001', name: 'Command Injection (os.system)', tool_name: 'execute_cmd', severity: 'CRITICAL', reason: 'Direct os.system call detected in execute_cmd' },
+                        { rule_id: 'DESC-INJECT-001', name: 'Prompt Injection Directive', tool_name: 'notes_summary', severity: 'HIGH', reason: 'Detected system override directive: ignore previous instructions' },
+                        { rule_id: 'TRUST-GAP-001', name: 'readOnlyHint Contract Violation', tool_name: 'delete_record', severity: 'HIGH', reason: 'Tool declares readOnlyHint=True but invokes os.remove' },
+                        { rule_id: 'PIN-RUGPULL-001', name: 'Catalog Drift & Rug Pull', tool_name: 'read_notes', severity: 'CRITICAL', reason: 'Runtime catalog differs from cryptographically pinned approval baseline' },
+                      ].map(example => (
+                        <button
+                          key={example.rule_id}
+                          className="btn btn-secondary"
+                          onClick={() => handleExplainFinding(example, explainUseLlm)}
+                          style={{ fontSize: '0.75rem', padding: '0.4rem 0.8rem' }}
+                        >
+                          {example.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Explainer Controls */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8rem', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={explainUseLlm}
+                    onChange={(e) => setExplainUseLlm(e.target.checked)}
+                  />
+                  Synthesize Executive Summary with Local Qwen LLM (Strict Quarantine Isolation)
+                </label>
+
+                {findingToExplain && (
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => handleExplainFinding(findingToExplain, explainUseLlm)}
+                    disabled={explainingFinding}
+                    style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem' }}
+                  >
+                    <RefreshCw size={14} className={explainingFinding ? "spin" : ""} />
+                    {explainingFinding ? "Retrieving & Synthesizing..." : "Explain Finding"}
+                  </button>
+                )}
+              </div>
+
+              {/* Explanation Outcome */}
+              {findingExplanation && (
+                <div style={{ background: '#07090E', borderRadius: '8px', border: '1px solid var(--border-subtle)', padding: '1.5rem' }}>
+                  {/* Taxonomy Tags */}
+                  <div style={{ display: 'flex', gap: '0.6rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+                    <span style={{ padding: '0.25rem 0.6rem', borderRadius: '4px', background: 'rgba(56, 189, 248, 0.15)', color: '#38BDF8', fontSize: '0.75rem', fontWeight: '700', border: '1px solid rgba(56, 189, 248, 0.3)' }}>
+                      {findingExplanation.cwe_mapping}
+                    </span>
+                    <span style={{ padding: '0.25rem 0.6rem', borderRadius: '4px', background: 'rgba(167, 139, 250, 0.15)', color: '#A78BFA', fontSize: '0.75rem', fontWeight: '700', border: '1px solid rgba(167, 139, 250, 0.3)' }}>
+                      {findingExplanation.owasp_mapping}
+                    </span>
+                    <span style={{ padding: '0.25rem 0.6rem', borderRadius: '4px', background: 'rgba(52, 211, 153, 0.15)', color: '#34D399', fontSize: '0.75rem', fontWeight: '700', border: '1px solid rgba(52, 211, 153, 0.3)' }}>
+                      Confidence: {(findingExplanation.confidence * 100).toFixed(0)}%
+                    </span>
+                    {findingExplanation.is_llm_synthesized && (
+                      <span style={{ padding: '0.25rem 0.6rem', borderRadius: '4px', background: 'rgba(249, 115, 22, 0.15)', color: '#F97316', fontSize: '0.75rem', fontWeight: '700', border: '1px solid rgba(249, 115, 22, 0.3)' }}>
+                        Qwen LLM Synthesized
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Grounded Explanation */}
+                  <div style={{ marginBottom: '1.25rem' }}>
+                    <h4 style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '0.4rem', textTransform: 'uppercase' }}>
+                      Authoritative Security Analysis:
+                    </h4>
+                    <p style={{ fontSize: '0.9rem', color: '#F8FAFC', lineHeight: '1.5', background: 'rgba(255,255,255,0.03)', padding: '1rem', borderRadius: '6px', borderLeft: '3px solid #38BDF8' }}>
+                      {findingExplanation.grounded_explanation}
+                    </p>
+                  </div>
+
+                  {/* Actionable Remediation Playbook */}
+                  <div style={{ marginBottom: '1.5rem' }}>
+                    <h4 style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '0.4rem', textTransform: 'uppercase' }}>
+                      Developer Remediation Playbook:
+                    </h4>
+                    <pre style={{ margin: 0, padding: '1rem', background: '#05070B', borderRadius: '6px', overflowX: 'auto', color: '#34D399', fontSize: '0.85rem', whiteSpace: 'pre-wrap', borderLeft: '3px solid #34D399' }}>
+                      {findingExplanation.actionable_remediation}
+                    </pre>
+                  </div>
+
+                  {/* Retrieved Sources Table */}
+                  <h4 style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '0.6rem', textTransform: 'uppercase' }}>
+                    Retrieved Specification Citations ({findingExplanation.retrieved_sources?.length || 0}):
+                  </h4>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    {(findingExplanation.retrieved_sources || []).map((src, idx) => (
+                      <div key={idx} style={{ background: 'rgba(255,255,255,0.02)', padding: '0.75rem 1rem', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.05)', fontSize: '0.8rem' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <span className="badge" style={{ background: src.trust_tier === 'OFFICIAL_SPEC' ? 'rgba(56, 189, 248, 0.15)' : 'rgba(167, 139, 250, 0.15)', color: src.trust_tier === 'OFFICIAL_SPEC' ? '#38BDF8' : '#A78BFA', fontSize: '0.7rem' }}>
+                              {src.trust_tier}
+                            </span>
+                            <strong style={{ color: '#F8FAFC' }}>{src.title}</strong>
+                            <span style={{ color: 'var(--text-muted)' }}>({src.publisher})</span>
+                          </div>
+                          {src.source_url && (
+                            <a href={src.source_url} target="_blank" rel="noreferrer" style={{ color: '#F97316', display: 'flex', alignItems: 'center', gap: '0.25rem', textDecoration: 'none', fontSize: '0.75rem' }}>
+                              Canonical Link <ExternalLink size={12} />
+                            </a>
+                          )}
+                        </div>
+                        <div style={{ color: '#94A3B8', fontSize: '0.75rem', marginBottom: '0.2rem' }}>{src.content}</div>
+                        <div style={{ color: 'var(--text-muted)', fontSize: '0.7rem', fontFamily: 'var(--font-mono)' }}>
+                          Digest: {src.content_hash}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Disclaimer */}
+                  <div style={{ marginTop: '1.25rem', padding: '0.75rem', borderRadius: '6px', background: 'rgba(249, 115, 22, 0.05)', border: '1px solid rgba(249, 115, 22, 0.2)', fontSize: '0.75rem', color: '#F97316' }}>
+                    ℹ {findingExplanation.disclaimer}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Section 2: Hybrid BM25 Knowledge Base Search */}
+            <div className="glass-panel" style={{ padding: '1.75rem', marginBottom: '2rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '1rem' }}>
+                <Search size={18} color="#38BDF8" />
+                <h3 style={{ fontSize: '1rem', fontWeight: '800' }}>Search Authoritative Security Corpus</h3>
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.25rem' }}>
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && searchKnowledgeBase()}
+                  placeholder="Search specifications (e.g. command injection, prompt injection, readOnlyHint, baseline pinning)..."
+                  style={{ flex: 1, padding: '0.6rem 0.9rem', borderRadius: '6px', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-subtle)', color: '#F8FAFC', fontSize: '0.85rem' }}
+                />
+                <select
+                  value={searchTrustTier}
+                  onChange={(e) => setSearchTrustTier(e.target.value)}
+                  style={{ padding: '0.6rem 0.9rem', borderRadius: '6px', background: '#0F172A', border: '1px solid var(--border-subtle)', color: '#F8FAFC', fontSize: '0.85rem' }}
+                >
+                  <option value="ALL">All Trust Tiers</option>
+                  <option value="OFFICIAL_SPEC">Official Spec (1.30x)</option>
+                  <option value="SECURITY_ADVISORY">Security Advisory (1.15x)</option>
+                  <option value="AUDIT_PLAYBOOK">Audit Playbook (1.05x)</option>
+                </select>
+                <button
+                  className="btn btn-primary"
+                  onClick={() => searchKnowledgeBase()}
+                  disabled={searchingIntel}
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem' }}
+                >
+                  <Search size={14} /> {searchingIntel ? "Searching..." : "Search"}
+                </button>
+              </div>
+
+              {/* Search Results */}
+              {searchResults.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                    Found {searchResults.length} relevant knowledge chunks:
+                  </div>
+                  {searchResults.map((res, i) => (
+                    <div key={i} style={{ background: '#07090E', padding: '1rem', borderRadius: '6px', border: '1px solid var(--border-subtle)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                          <span className="badge" style={{ background: 'rgba(56, 189, 248, 0.15)', color: '#38BDF8', fontSize: '0.7rem' }}>
+                            {res.trust_tier}
+                          </span>
+                          <strong style={{ color: '#F8FAFC', fontSize: '0.9rem' }}>{res.title}</strong>
+                          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>BM25 Score: {res.score}</span>
+                        </div>
+                        {res.source_url && (
+                          <a href={res.source_url} target="_blank" rel="noreferrer" style={{ color: '#F97316', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.2rem', textDecoration: 'none' }}>
+                            Spec URL <ExternalLink size={12} />
+                          </a>
+                        )}
+                      </div>
+                      <p style={{ fontSize: '0.8rem', color: '#CBD5E1', lineHeight: '1.4', margin: 0 }}>{res.content}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Section 3: Authoritative Sources Catalog */}
+            <div className="glass-panel" style={{ padding: '1.75rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '1rem' }}>
+                <Database size={18} color="#A78BFA" />
+                <h3 style={{ fontSize: '1rem', fontWeight: '800' }}>Ingested Authoritative Security Specifications</h3>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
+                {(intelligenceSources.length > 0 ? intelligenceSources : [
+                  { id: 'DOC-MCP-SPEC-001', title: 'Model Context Protocol (MCP) Specification', publisher: 'Model Context Protocol Working Group', trust_tier: 'OFFICIAL_SPEC', version: '2024-11-05', url: 'https://modelcontextprotocol.io/docs/concepts/tools', license: 'MIT', chunk_count: 4 },
+                  { id: 'DOC-OWASP-LLM-001', title: 'OWASP Top 10 for Large Language Model Applications', publisher: 'OWASP Foundation', trust_tier: 'SECURITY_ADVISORY', version: '2025.1', url: 'https://owasp.org/www-project-top-10-for-large-language-model-applications/', license: 'CC-BY-SA-4.0', chunk_count: 3 },
+                  { id: 'DOC-CWE-CATALOG-001', title: 'Common Weakness Enumeration Standards Catalog', publisher: 'MITRE Corporation', trust_tier: 'OFFICIAL_SPEC', version: '4.14', url: 'https://cwe.mitre.org/data/definitions/78.html', license: 'MITRE Terms', chunk_count: 4 },
+                  { id: 'DOC-PLAYBOOKS-001', title: 'AuditForge Approved Remediation Playbooks', publisher: 'AuditForge Security Research', trust_tier: 'AUDIT_PLAYBOOK', version: '2026.1', url: 'https://github.com/Pswaikar1742/AuditForge/docs/remediation', license: 'Apache-2.0', chunk_count: 4 },
+                ]).map(doc => (
+                  <div key={doc.id} style={{ background: '#07090E', padding: '1.25rem', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
+                      <span className="badge" style={{ background: 'rgba(56, 189, 248, 0.15)', color: '#38BDF8', fontSize: '0.7rem' }}>
+                        {doc.trust_tier}
+                      </span>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>v{doc.version}</span>
+                    </div>
+                    <strong style={{ display: 'block', color: '#F8FAFC', fontSize: '0.9rem', marginBottom: '0.25rem' }}>{doc.title}</strong>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>
+                      Published by {doc.publisher} • {doc.chunk_count || 4} chunks indexed
+                    </div>
+                    <a href={doc.url} target="_blank" rel="noreferrer" style={{ color: '#F97316', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.25rem', textDecoration: 'none' }}>
+                      Official Documentation <ExternalLink size={12} />
+                    </a>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ═════════════════════════════════════════════════════════════ */}
+        {/* ── VIEW: ASYNCHRONOUS JOB QUEUE & BULK AUDIT MONITOR ───────── */}
+        {/* ═════════════════════════════════════════════════════════════ */}
+        {activeTab === 'jobs' && (
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.5rem' }}>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.25rem' }}>
+                  <h2 style={{ fontSize: '1.25rem', fontWeight: '800' }}>Scalable Job Queue & Bulk Auditor</h2>
+                  <span className="badge" style={{ background: 'rgba(52, 211, 153, 0.15)', color: '#34D399', border: '1px solid rgba(52, 211, 153, 0.3)' }}>
+                    {queueMetrics?.queue_mode === 'REDIS' ? 'Redis Distributed Broker' : 'In-Memory Async Queue'}
+                  </span>
+                </div>
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', maxWidth: '900px' }}>
+                  Executes high-concurrency background scan jobs using Redis distributed task queueing or local in-process asynchronous workers with PostgreSQL/SQLite persistence.
+                </p>
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.75rem' }}>
+                <button
+                  className="btn btn-secondary"
+                  onClick={fetchJobs}
+                  disabled={loadingJobs}
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem' }}
+                >
+                  <RefreshCw size={14} className={loadingJobs ? "spin" : ""} /> Refresh Jobs
+                </button>
+              </div>
+            </div>
+
+            {/* Queue Metrics */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1.25rem', marginBottom: '2rem' }}>
+              <div className="glass-panel" style={{ padding: '1.25rem' }}>
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>QUEUE BACKEND</span>
+                <div style={{ fontSize: '1.1rem', fontWeight: '700', color: '#F8FAFC', marginTop: '0.25rem' }}>
+                  {queueMetrics?.queue_mode || 'IN_MEMORY'}
+                </div>
+                <span style={{ fontSize: '0.7rem', color: queueMetrics?.redis_connected ? '#34D399' : '#F97316' }}>
+                  {queueMetrics?.redis_connected ? 'Redis Connected (port 6379)' : 'Standalone Worker Active'}
+                </span>
+              </div>
+              <div className="glass-panel" style={{ padding: '1.25rem' }}>
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>PENDING IN QUEUE</span>
+                <div style={{ fontSize: '1.25rem', fontWeight: '800', color: '#F87171', marginTop: '0.25rem' }}>
+                  {queueMetrics?.queued_jobs || 0} Jobs
+                </div>
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Awaiting worker thread</span>
+              </div>
+              <div className="glass-panel" style={{ padding: '1.25rem' }}>
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>TOTAL JOBS RECORDED</span>
+                <div style={{ fontSize: '1.25rem', fontWeight: '800', color: '#38BDF8', marginTop: '0.25rem' }}>
+                  {jobList.length} Jobs
+                </div>
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Persisted in database</span>
+              </div>
+              <div className="glass-panel" style={{ padding: '1.25rem' }}>
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>CONCURRENCY ENGINE</span>
+                <div style={{ fontSize: '1.1rem', fontWeight: '700', color: '#34D399', marginTop: '0.25rem' }}>Active</div>
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Non-blocking background runner</span>
+              </div>
+            </div>
+
+            {/* Enqueue Controls */}
+            <div className="glass-panel" style={{ padding: '1.75rem', marginBottom: '2rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '1rem' }}>
+                <Play size={18} color="#34D399" />
+                <h3 style={{ fontSize: '1rem', fontWeight: '800' }}>Submit Asynchronous Scan Tasks</h3>
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                <select
+                  value={selectedJobTarget}
+                  onChange={(e) => setSelectedJobTarget(e.target.value)}
+                  style={{ flex: 1, minWidth: '280px', padding: '0.6rem 0.9rem', borderRadius: '6px', background: '#0F172A', border: '1px solid var(--border-subtle)', color: '#F8FAFC', fontSize: '0.85rem' }}
+                >
+                  <optgroup label="Competition Live Targets (5)">
+                    <option value="fixtures/clean_reader">fixtures/clean_reader (Safe Control)</option>
+                    <option value="fixtures/rogue_server">fixtures/rogue_server (os.system C2)</option>
+                    <option value="fixtures/poisoned_counter">fixtures/poisoned_counter (Unicode injection)</option>
+                    <option value="fixtures/lying_annotations">fixtures/lying_annotations (readOnly trust gap)</option>
+                    <option value="fixtures/slow_dos">fixtures/slow_dos (ReDoS & hang)</option>
+                  </optgroup>
+                  <optgroup label="AttackLab & Synthesis Suites">
+                    <option value="benchmarks/attacklab/workloads/shell_escape.py">benchmarks/attacklab: shell_escape</option>
+                    <option value="benchmarks/attacklab/workloads/prompt_injection_v2.py">benchmarks/attacklab: prompt_injection_v2</option>
+                    <option value="benchmarks/attacklab/workloads/destructive_unlink.py">benchmarks/attacklab: destructive_unlink</option>
+                  </optgroup>
+                </select>
+
+                <button
+                  className="btn btn-primary"
+                  onClick={() => submitAsyncScanJob(selectedJobTarget)}
+                  disabled={loadingJobs}
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem', whiteSpace: 'nowrap' }}
+                >
+                  <RefreshCw size={14} className={loadingJobs ? "spin" : ""} />
+                  Enqueue Scan Job
+                </button>
+
+                <button
+                  className="btn btn-secondary"
+                  onClick={async () => {
+                    const targets = [
+                      'fixtures/clean_reader',
+                      'fixtures/rogue_server',
+                      'fixtures/poisoned_counter',
+                      'fixtures/lying_annotations',
+                      'fixtures/slow_dos',
+                    ];
+                    for (const t of targets) {
+                      await submitAsyncScanJob(t);
+                    }
+                  }}
+                  disabled={loadingJobs}
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem', whiteSpace: 'nowrap', borderColor: 'rgba(56, 189, 248, 0.4)', color: '#38BDF8' }}
+                >
+                  <Layers size={14} />
+                  Bulk Audit: Run All 5 Competition MCPs
+                </button>
+              </div>
+            </div>
+
+            {/* Jobs Table */}
+            <div className="glass-panel" style={{ padding: '1.75rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                  <Terminal size={18} color="#F97316" />
+                  <h3 style={{ fontSize: '1rem', fontWeight: '800' }}>Recent Scan Tasks ({jobList.length})</h3>
+                </div>
+              </div>
+
+              {jobList.length === 0 ? (
+                <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+                  No asynchronous scan jobs recorded yet. Click "Enqueue Scan Job" above to submit a task.
+                </div>
+              ) : (
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
+                        <th style={{ padding: '0.75rem' }}>Job ID</th>
+                        <th style={{ padding: '0.75rem' }}>Target</th>
+                        <th style={{ padding: '0.75rem' }}>Type</th>
+                        <th style={{ padding: '0.75rem' }}>Status</th>
+                        <th style={{ padding: '0.75rem' }}>Created At</th>
+                        <th style={{ padding: '0.75rem' }}>Completed At</th>
+                        <th style={{ padding: '0.75rem' }}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {jobList.map(j => {
+                        const isDone = j.status === 'SUCCEEDED';
+                        const isRunning = j.status === 'RUNNING';
+                        const isFailed = j.status === 'FAILED';
+                        const isCancelled = j.status === 'CANCELLED';
+                        return (
+                          <tr key={j.job_id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                            <td style={{ padding: '0.75rem', fontFamily: 'monospace', color: '#CBD5E1', fontWeight: '700' }}>
+                              {j.job_id}
+                            </td>
+                            <td style={{ padding: '0.75rem', color: '#F8FAFC' }}>
+                              {j.target}
+                            </td>
+                            <td style={{ padding: '0.75rem', color: 'var(--text-muted)' }}>
+                              {j.scan_type}
+                            </td>
+                            <td style={{ padding: '0.75rem' }}>
+                              <span style={{
+                                padding: '0.2rem 0.5rem',
+                                borderRadius: '4px',
+                                fontSize: '0.75rem',
+                                fontWeight: '700',
+                                background: isDone ? 'rgba(52, 211, 153, 0.15)' : isRunning ? 'rgba(56, 189, 248, 0.15)' : isFailed ? 'rgba(248, 113, 113, 0.15)' : isCancelled ? 'rgba(148, 163, 184, 0.15)' : 'rgba(251, 191, 36, 0.15)',
+                                color: isDone ? '#34D399' : isRunning ? '#38BDF8' : isFailed ? '#F87171' : isCancelled ? '#94A3B8' : '#FBBF24',
+                                border: `1px solid ${isDone ? 'rgba(52, 211, 153, 0.3)' : isRunning ? 'rgba(56, 189, 248, 0.3)' : isFailed ? 'rgba(248, 113, 113, 0.3)' : isCancelled ? 'rgba(148, 163, 184, 0.3)' : 'rgba(251, 191, 36, 0.3)'}`,
+                              }}>
+                                {isRunning && <RefreshCw size={10} className="spin" style={{ display: 'inline', marginRight: '4px' }} />}
+                                {j.status}
+                              </span>
+                            </td>
+                            <td style={{ padding: '0.75rem', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                              {j.created_at ? new Date(j.created_at).toLocaleTimeString() : 'N/A'}
+                            </td>
+                            <td style={{ padding: '0.75rem', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                              {j.completed_at ? new Date(j.completed_at).toLocaleTimeString() : '-'}
+                            </td>
+                            <td style={{ padding: '0.75rem' }}>
+                              <div style={{ display: 'flex', gap: '0.4rem' }}>
+                                {j.scan_id && (
+                                  <button
+                                    className="btn btn-secondary"
+                                    onClick={() => {
+                                      fetchScanDetails(j.scan_id);
+                                      setActiveTab('scanner');
+                                    }}
+                                    style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }}
+                                  >
+                                    View Scan
+                                  </button>
+                                )}
+                                {(j.status === 'QUEUED' || j.status === 'RUNNING') && (
+                                  <button
+                                    className="btn btn-secondary"
+                                    onClick={() => cancelJob(j.job_id)}
+                                    style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem', color: '#F87171', borderColor: 'rgba(248, 113, 113, 0.4)' }}
+                                  >
+                                    Cancel
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </div>
         )}

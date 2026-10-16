@@ -4,6 +4,7 @@ REST API for MCP Security Auditing, Evidence Capsules, and Catalog Pinning.
 """
 
 import asyncio
+import os
 from pathlib import Path
 import sys
 from typing import Any, Dict, List, Optional, Tuple
@@ -47,10 +48,15 @@ _db_instance: Optional[Database] = None
 _orchestrator_instance: Optional[ScanOrchestrator] = None
 
 
-def get_db() -> Database:
+def get_db() -> Any:
     global _db_instance
     if _db_instance is None:
-        _db_instance = Database(config.DB_PATH)
+        db_url = os.getenv("DATABASE_URL")
+        if db_url and (db_url.startswith("postgresql://") or db_url.startswith("postgres://")):
+            from auditforge.storage.pg_database import PostgresDatabase
+            _db_instance = PostgresDatabase(db_url)
+        else:
+            _db_instance = Database(config.DB_PATH)
     return _db_instance
 
 
@@ -395,6 +401,44 @@ def export_scan_report(scan_id: str, format: str = "json") -> Response:
         return Response(content=md_text, media_type="text/markdown")
     else:
         raise HTTPException(status_code=400, detail=f"Unsupported format '{format}'. Use 'json' or 'markdown'.")
+
+
+@app.get("/api/reports")
+def list_saved_reports() -> List[Dict[str, Any]]:
+    """List all saved Markdown audit reports in scan_reports/ and reports/ directories."""
+    reports = []
+    seen = set()
+    for search_dir in [Path("scan_reports"), Path("reports")]:
+        if search_dir.exists():
+            for f in sorted(search_dir.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True):
+                if f.name in seen:
+                    continue
+                seen.add(f.name)
+                try:
+                    stat = f.stat()
+                    with open(f, "r", encoding="utf-8") as fp:
+                        header = "".join([fp.readline() for _ in range(6)]).strip()
+                    reports.append({
+                        "filename": f.name,
+                        "scan_id": f.stem,
+                        "size_bytes": stat.st_size,
+                        "modified_at": stat.st_mtime,
+                        "preview": header,
+                    })
+                except Exception:
+                    continue
+    return reports[:50]
+
+
+@app.get("/api/reports/{filename}")
+def get_report_content(filename: str) -> Response:
+    """Return raw Markdown content of a saved report."""
+    safe_name = Path(filename).name
+    for search_dir in [Path("scan_reports"), Path("reports")]:
+        fpath = search_dir / safe_name
+        if fpath.exists():
+            return Response(content=fpath.read_text(encoding="utf-8"), media_type="text/markdown")
+    raise HTTPException(status_code=404, detail=f"Report '{filename}' not found")
 
 
 KNOWN_VULNERABLE_SERVERS = {"rogue_server", "poisoned_description", "lying_annotations"}
@@ -837,3 +881,136 @@ def trigger_model_assurance(req: KoalaAuditRequest) -> Dict[str, Any]:
         if "/home/" in clean_msg or "/run/media/" in clean_msg:
             clean_msg = clean_msg.split(":")[-1].strip()
         raise HTTPException(status_code=500, detail=f"KOALA assurance audit failed: {clean_msg}")
+
+
+# ── Security Intelligence & RAG Endpoints ─────────────────────────
+class IntelligenceSearchRequest(BaseModel):
+    query: str
+    top_k: int = 5
+    trust_tier: Optional[str] = None
+
+
+class ExplainFindingRequest(BaseModel):
+    finding: Dict[str, Any]
+    evidence_records: Optional[List[Dict[str, Any]]] = None
+    use_llm: bool = False
+
+
+@app.get("/api/intelligence/status")
+def get_intelligence_status() -> Dict[str, Any]:
+    """Return status and document metrics of the security knowledge corpus."""
+    from auditforge.intelligence.registry import get_knowledge_registry, CORPUS_VERSION
+    reg = get_knowledge_registry()
+    return {
+        "status": "ONLINE",
+        "corpus_version": CORPUS_VERSION,
+        "total_documents": len(reg.documents),
+        "total_chunks": reg.total_chunks,
+        "search_mode": "HYBRID_BM25_TRUST_WEIGHTED",
+        "supported_trust_tiers": ["OFFICIAL_SPEC", "SECURITY_ADVISORY", "AUDIT_PLAYBOOK"],
+    }
+
+
+@app.get("/api/intelligence/sources")
+def list_intelligence_sources() -> List[Dict[str, Any]]:
+    """Return all ingested authoritative security specifications and playbooks."""
+    from auditforge.intelligence.registry import get_knowledge_registry
+    return get_knowledge_registry().get_sources_catalog()
+
+
+@app.post("/api/intelligence/search")
+def search_intelligence(req: IntelligenceSearchRequest) -> Dict[str, Any]:
+    """Search the security knowledge base using hybrid BM25 and trust-tier ranking."""
+    from auditforge.intelligence.registry import get_knowledge_registry
+    reg = get_knowledge_registry()
+    chunks = reg.search(req.query, top_k=req.top_k, trust_tier=req.trust_tier)
+    return {
+        "query": req.query,
+        "total_matches": len(chunks),
+        "results": [c.to_dict() for c in chunks],
+    }
+
+
+@app.post("/api/intelligence/explain-finding")
+def explain_security_finding(req: ExplainFindingRequest) -> Dict[str, Any]:
+    """Generate grounded RAG explanation, CWE/OWASP mapping, and remediation playbook for a finding."""
+    from auditforge.intelligence.explainer import FindingExplainer
+    from auditforge.analyzers.providers import get_inference_provider, DisabledProvider
+
+    provider = get_inference_provider() if req.use_llm else DisabledProvider()
+    explainer = FindingExplainer(provider=provider)
+    result = explainer.explain(finding=req.finding, evidence_records=req.evidence_records)
+    return result
+
+
+# ── Asynchronous Scan Queue & Job Endpoints ─────────────────────────
+class SubmitScanJobRequest(BaseModel):
+    target: str
+    scan_type: str = "LIVE_SCAN"
+    use_llm: bool = False
+
+
+@app.post("/api/jobs/scans", status_code=202)
+def submit_async_scan(req: SubmitScanJobRequest) -> Dict[str, Any]:
+    """Enqueue an asynchronous scan task for background processing."""
+    from auditforge.queue.manager import get_queue_manager
+    manager = get_queue_manager()
+    job = manager.enqueue_scan(
+        target=req.target,
+        scan_type=req.scan_type,
+        options={"use_llm": req.use_llm},
+    )
+    return job
+
+
+@app.get("/api/jobs")
+def list_jobs(limit: int = 50) -> Dict[str, Any]:
+    """List recent scan jobs and operational queue metrics."""
+    from auditforge.queue.manager import get_queue_manager
+    manager = get_queue_manager()
+    jobs = manager.list_jobs(limit=limit)
+    metrics = manager.get_queue_metrics()
+    return {
+        "metrics": metrics,
+        "jobs": jobs,
+    }
+
+
+@app.get("/api/jobs/{job_id}")
+def get_job_status(job_id: str) -> Dict[str, Any]:
+    """Retrieve execution status and linked scan result for a job."""
+    from auditforge.queue.manager import get_queue_manager
+    manager = get_queue_manager()
+    job = manager.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+    scan_summary = None
+    if job.get("scan_id"):
+        db = get_db()
+        scan = db.get_scan_result(job["scan_id"])
+        if scan:
+            scan_summary = {
+                "scan_id": scan.scan_id,
+                "trust_state": scan.trust_state.value,
+                "findings_count": len(scan.findings),
+                "summary": scan.summary,
+            }
+
+    return {
+        "job": job,
+        "scan_summary": scan_summary,
+    }
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+def cancel_scan_job(job_id: str) -> Dict[str, Any]:
+    """Cancel a queued or running scan job."""
+    from auditforge.queue.manager import get_queue_manager
+    manager = get_queue_manager()
+    success = manager.cancel_job(job_id)
+    if not success:
+        raise HTTPException(status_code=400, detail=f"Unable to cancel job {job_id} (already completed or not found)")
+    return {"status": "CANCELLED", "job_id": job_id}
+
+
