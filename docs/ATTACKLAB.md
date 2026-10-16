@@ -106,3 +106,46 @@ Expand beyond template repetition with reviewed held-out scenarios, semantic sam
 unavailable coverage, dependency-lock provenance, per-size metrics and cancellable checkpoint reports.
 The current baseline detector's contextual false positives and obfuscated false negatives require a
 separate scanner-owned workstream; AttackLab intentionally does not patch those rules.
+
+## Executed acceptance evidence (2026-10-16)
+
+Measured implementation commit: `1e7dea1bcbdc06bb82eb3eaf77963bf31830c425` (clean checkout).
+Stable parent: `c97baf48b0e9efcecb90e3b521de43403354bcaf`. Python 3.14.7, Nobara Linux x86_64.
+Raw logs and JSON/CSV/Markdown artifacts: `/home/psw/attacklab-evidence/` (not committed).
+
+Exact executed commands from `/home/psw/auditforge-attacklab`:
+
+```bash
+export PYTHONPATH="$PWD/src"
+python -m benchmarks.attacklab --cases 100 --seed 42 --batch-size 25 --samples 20 --output /home/psw/attacklab-evidence/smoke > /home/psw/attacklab-evidence/smoke.log 2>&1
+python -m benchmarks.attacklab --cases 1000 --seed 42 --batch-size 1000 --output /home/psw/attacklab-evidence/1k > /home/psw/attacklab-evidence/1k.log 2>&1
+python -m benchmarks.attacklab --cases 100000 --seed 42 --batch-size 1000 --output /home/psw/attacklab-evidence/100k > /home/psw/attacklab-evidence/100k.log 2>&1
+python -m benchmarks.attacklab --cases 100000 --seed 42 --batch-size 1000 --deduplicate --output /home/psw/attacklab-evidence/100k-dedup > /home/psw/attacklab-evidence/100k-dedup.log 2>&1
+PYTHONPATH=src python -m pytest tests/unit/test_attacklab.py tests/unit/test_contracts.py tests/benchmarks/test_benchmark_targets.py > /home/psw/attacklab-evidence/tests.log 2>&1
+git diff --name-only origin/main -- src dashboard tests/benchmarks
+```
+
+All four benchmark commands exited 0. Scope diff output was empty. Actual pytest summary:
+
+```text
+37 passed, 782 warnings in 4.66s
+```
+
+Warnings are existing pytest-asyncio deprecations under Python 3.14. Initial resource test attempt: `1 failed, 19 passed, 645 warnings in 0.53s`; failure was `MemoryError` during Pydantic import under a 256 MiB virtual-address limit, addressed as described above.
+
+| Run | Submitted | Assessed | Invalid errors | Runtime s | Submitted/s | Detector calls/s | Peak RSS MiB | FP | FN |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| smoke | 100 | 92 | 8 | 0.012497 | 8001.95 | 16467.85 | 34.87 | 4 | 8 |
+| 1k | 1000 | 914 | 86 | 0.211190 | 4735.07 | 6010.45 | 36.35 | 44 | 86 |
+| 100k | 100000 | 91306 | 8694 | 28.520642 | 3506.23 | 4153.81 | 36.14 | 4348 | 8696 |
+| 100k-dedup | 100000 | 91306 | 8694 | 5.794038 | 17259.12 | 1403.03 | 36.23 | 4348 | 8696 |
+
+100K without dedup: TP 26,087; TN 52,175; precision 85.714%; recall 74.999%; FPR 7.692%; FNR 25.001%; F1 0.799994. Invalid-input rate 8.694%; zero skips and no observed detector failures. Invalid errors are all in the invalid category, not failed negative classifications.
+
+100K processing latency: average 0.265914 ms, p50 0.055573 ms, p95 0.200597 ms, p99 8.799290 ms. Detector-only average 0.240743 ms, p95 0.169379 ms. Deduplicated processing average 0.040868 ms, p95 0.049811 ms. Dedup has 91,279 hits, 27 real calls and zero evictions; confusion matrices are identical.
+
+Expected versus actual: all explicit injections and large embedded injections matched; all ordinary benign scenarios were negative. Quoted attack documentation produced the false positives; full-width Unicode and whitespace-obfuscated directives produced the false negatives. These are measured detector limitations, not hidden benchmark failures.
+
+Files inspected: root AGENTS.md, pyproject.toml, src/auditforge/analyzers/description.py, src/auditforge/core/contracts.py, src/auditforge/config.py, and relevant test discovery. Files created: benchmarks/attacklab/{__init__,__main__,corpus,runner,report}.py, tests/unit/test_attacklab.py, docs/ATTACKLAB.md.
+
+Review destination: draft PR against **main**, per the explicit AttackLab workstream instruction overriding the older general develop-only handoff rule. No merge performed. No production files changed. Single-run timings are workstation measurements, not controlled comparative performance claims.
