@@ -30,7 +30,16 @@ from auditforge.queue.worker import ScanWorker
 
 
 @pytest.fixture
-def test_client():
+def test_client(tmp_path):
+    from auditforge.api import set_db, set_orchestrator
+    from auditforge.storage.database import Database
+    from auditforge.orchestrator import ScanOrchestrator
+    from auditforge.queue.manager import get_queue_manager
+    test_db_path = str(tmp_path / "queue_api_test.db")
+    test_db = Database(test_db_path)
+    set_db(test_db)
+    set_orchestrator(ScanOrchestrator(db=test_db, use_docker=False, use_llm=False))
+    get_queue_manager(db=test_db)
     return TestClient(app)
 
 
@@ -113,8 +122,8 @@ class TestSQLAlchemyStorage:
 
 
 class TestScanQueueAndWorker:
-    def test_queue_enqueue_and_metrics(self):
-        qm = ScanQueueManager(redis_url="redis://nonexistent:9999/0")
+    def test_queue_enqueue_and_metrics(self, memory_pg_db):
+        qm = ScanQueueManager(redis_url="redis://nonexistent:9999/0", db=memory_pg_db)
         assert qm.mode == "IN_MEMORY"
         metrics = qm.get_queue_metrics()
         assert metrics["queue_mode"] == "IN_MEMORY"
@@ -158,17 +167,22 @@ class TestScanQueueAndWorker:
 
 
 class TestMigrationUtility:
-    def test_migration_dry_run(self):
-        # Dry-run on auditforge.db
-        res = migrate("auditforge.db", "sqlite:///:memory:", dry_run=True)
+    def test_migration_dry_run(self, tmp_path):
+        source_db_path = str(tmp_path / "source.db")
+        from auditforge.storage.database import Database
+        Database(source_db_path)
+        res = migrate(source_db_path, "sqlite:///:memory:", dry_run=True)
         assert res["dry_run"] is True
         assert res["validation_errors"] == 0
         assert res["scans_found"] >= 0
 
     def test_migration_execution(self, tmp_path):
+        source_db_path = str(tmp_path / "source.db")
+        from auditforge.storage.database import Database
+        Database(source_db_path)
         target_db_path = tmp_path / "target_migrated.db"
         target_url = f"sqlite:///{target_db_path}"
-        res = migrate("auditforge.db", target_url, dry_run=False)
+        res = migrate(source_db_path, target_url, dry_run=False)
         assert res["dry_run"] is False
         assert res["validation_errors"] == 0
         assert res["scans_migrated"] == res["scans_found"]

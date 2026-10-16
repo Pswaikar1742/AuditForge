@@ -24,9 +24,9 @@ QUEUE_KEY = "auditforge:jobs:queue"
 class ScanQueueManager:
     """Manages asynchronous scan execution jobs."""
 
-    def __init__(self, redis_url: Optional[str] = None):
+    def __init__(self, redis_url: Optional[str] = None, db: Optional[Any] = None):
         self.redis_url = redis_url or os.getenv("REDIS_URL", "redis://localhost:6379/0")
-        self.db = get_storage()
+        self.db = db or get_storage()
         self.redis_client = None
         self.mode = "IN_MEMORY"
         self._in_memory_queue: queue.Queue = queue.Queue()
@@ -143,9 +143,11 @@ class ScanQueueManager:
 _GLOBAL_QUEUE_MANAGER: Optional[ScanQueueManager] = None
 
 
-def get_queue_manager() -> ScanQueueManager:
+def get_queue_manager(db: Optional[Any] = None) -> ScanQueueManager:
     """Singleton getter for the scan queue manager."""
     global _GLOBAL_QUEUE_MANAGER
     if _GLOBAL_QUEUE_MANAGER is None:
-        _GLOBAL_QUEUE_MANAGER = ScanQueueManager()
+        _GLOBAL_QUEUE_MANAGER = ScanQueueManager(db=db)
+    elif db is not None:
+        _GLOBAL_QUEUE_MANAGER.db = db
     return _GLOBAL_QUEUE_MANAGER

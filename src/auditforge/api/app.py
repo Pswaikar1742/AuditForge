@@ -954,7 +954,7 @@ class SubmitScanJobRequest(BaseModel):
 def submit_async_scan(req: SubmitScanJobRequest) -> Dict[str, Any]:
     """Enqueue an asynchronous scan task for background processing."""
     from auditforge.queue.manager import get_queue_manager
-    manager = get_queue_manager()
+    manager = get_queue_manager(db=get_db())
     job = manager.enqueue_scan(
         target=req.target,
         scan_type=req.scan_type,
@@ -967,7 +967,7 @@ def submit_async_scan(req: SubmitScanJobRequest) -> Dict[str, Any]:
 def list_jobs(limit: int = 50) -> Dict[str, Any]:
     """List recent scan jobs and operational queue metrics."""
     from auditforge.queue.manager import get_queue_manager
-    manager = get_queue_manager()
+    manager = get_queue_manager(db=get_db())
     jobs = manager.list_jobs(limit=limit)
     metrics = manager.get_queue_metrics()
     return {
@@ -980,7 +980,7 @@ def list_jobs(limit: int = 50) -> Dict[str, Any]:
 def get_job_status(job_id: str) -> Dict[str, Any]:
     """Retrieve execution status and linked scan result for a job."""
     from auditforge.queue.manager import get_queue_manager
-    manager = get_queue_manager()
+    manager = get_queue_manager(db=get_db())
     job = manager.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
@@ -1007,7 +1007,7 @@ def get_job_status(job_id: str) -> Dict[str, Any]:
 def cancel_scan_job(job_id: str) -> Dict[str, Any]:
     """Cancel a queued or running scan job."""
     from auditforge.queue.manager import get_queue_manager
-    manager = get_queue_manager()
+    manager = get_queue_manager(db=get_db())
     success = manager.cancel_job(job_id)
     if not success:
         raise HTTPException(status_code=400, detail=f"Unable to cancel job {job_id} (already completed or not found)")
