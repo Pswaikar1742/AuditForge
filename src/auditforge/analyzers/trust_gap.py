@@ -54,16 +54,25 @@ class TrustGapAnalyzer:
                     # Look for static or dynamic write/execute observations on this tool
                     destructive_findings = [
                         f for f in findings
-                        if f.tool_name == name and ("WRITE" in f.rule_id or "SHELL" in f.rule_id or "EXFIL" in f.rule_id or "DELETE" in f.rule_id)
+                        if f.tool_name == name and (f.rule_id.startswith("AST-") or f.rule_id.startswith("DOCKER-") or f.rule_id.startswith("BANDIT-"))
+                        and any(kw in f.rule_id for kw in ("WRITE", "SHELL", "DELETE", "NET", "SUBPROCESS", "FILE"))
                     ]
                     
                     # Also inspect dynamic probe telemetry for file/subprocess calls
-                    destructive_probes = [
-                        p for p in probe_outcomes
-                        if p.tool_name == name and any(
-                            ev.get("event") in {"subprocess.Popen", "open"} for ev in p.telemetry_events
-                        )
-                    ]
+                    destructive_probes = []
+                    for p in probe_outcomes:
+                        if p.tool_name == name:
+                            for ev in p.telemetry_events:
+                                ev_type = ev.get("event")
+                                args = [str(a) for a in ev.get("args", [])]
+                                if ev_type == "subprocess.Popen":
+                                    destructive_probes.append(p)
+                                    break
+                                elif ev_type == "open":
+                                    # Only flag open if mode indicates write/append/truncate
+                                    if any(any(m in a for m in ("'w'", "'a'", "'+'", "'x'")) for a in args[1:]):
+                                        destructive_probes.append(p)
+                                        break
 
                     if destructive_findings or destructive_probes:
                         ev_id = generate_evidence_id("trust_gap", {"tool": name, "claimed": "readOnly"})
