@@ -106,3 +106,90 @@ Integration tests that start target fixtures run in a non-root networkless Docke
 live MCP tests run via the dedicated host venv and launch only constrained Docker targets.
 No target MCP server is run on the Nobara host. Live KOALA installation testing is explicitly
 skipped in the test container, where KOALA is absent; mocked compatibility tests still execute.
+
+## Executed acceptance evidence
+
+Measured clean implementation: `7c0faba8affceeca332c9d3813934bf34457e1b1`. All 12 comparisons have identical paired corpus hashes and detector-call counts, with caching and inference disabled. No detector changes were made after evaluation.
+
+Actual terminal summaries:
+
+```text
+New hardening unit tests: 39 passed, 724 warnings in 0.60s
+Final constrained-container suite: 123 passed, 1 skipped in 141.69s (0:02:21)
+Docker-backed live MCP tests: 2 passed in 16.60s
+Unchanged AttackLab compatibility tests: 19 passed, 596 warnings in 1.98s
+```
+
+Python 3.14 warnings are pytest-asyncio deprecations. The container uses Python 3.12; its single skip is the live KOALA installation test, not a claimed pass. The separate isolated live KOALA result is reported below. Actual unavailable-model probing against 127.0.0.1:1 returned `Connection refused`, `triage=REVIEW_REQUIRED`, `status=SKIPPED`, with no finding. Timeout and malformed-response tests use explicitly mocked responses and are not live model-quality evidence.
+
+Quality (rates are conditional on assessed cases; abstentions remain in submitted counts):
+
+| Dataset | Detector | Assessed/submitted | TP | TN | FP | FN | Abstentions | Precision | Recall | F1 | FPR | FNR |
+|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| independent 24 | baseline | 24/24 | 3 | 10 | 2 | 9 | 0 | 0.60000 | 0.25000 | 0.35294 | 0.16667 | 0.75000 |
+| independent 24 | hardened | 23/24 | 3 | 11 | 0 | 9 | 1 | 1.00000 | 0.25000 | 0.40000 | 0.00000 | 0.75000 |
+| heldout 18 | baseline | 18/18 | 5 | 4 | 3 | 6 | 0 | 0.62500 | 0.45455 | 0.52632 | 0.42857 | 0.54545 |
+| heldout 18 | hardened | 18/18 | 11 | 7 | 0 | 0 | 0 | 1.00000 | 1.00000 | 1.00000 | 0.00000 | 0.00000 |
+| repeated 10000 | baseline | 9132/10000 | 2609 | 5218 | 435 | 870 | 0 | 0.85710 | 0.74993 | 0.79994 | 0.07695 | 0.25007 |
+| repeated 10000 | hardened | 9132/10000 | 3479 | 5653 | 0 | 0 | 0 | 1.00000 | 1.00000 | 1.00000 | 0.00000 | 0.00000 |
+| diverse 10000 | baseline | 9000/10000 | 3000 | 1000 | 1000 | 4000 | 0 | 0.75000 | 0.42857 | 0.54545 | 0.50000 | 0.57143 |
+| diverse 10000 | hardened | 8000/10000 | 7000 | 1000 | 0 | 0 | 1000 | 1.00000 | 1.00000 | 1.00000 | 0.00000 | 0.00000 |
+| maximum 10000 | baseline | 10000/10000 | 3333 | 1112 | 1111 | 4444 | 0 | 0.75000 | 0.42857 | 0.54545 | 0.49978 | 0.57143 |
+| maximum 10000 | hardened | 8889/10000 | 7777 | 1112 | 0 | 0 | 1111 | 1.00000 | 1.00000 | 1.00000 | 0.00000 | 0.00000 |
+| diverse 100000 | baseline | 90000/100000 | 30000 | 10000 | 10000 | 40000 | 0 | 0.75000 | 0.42857 | 0.54545 | 0.50000 | 0.57143 |
+| diverse 100000 | hardened | 80000/100000 | 70000 | 10000 | 0 | 0 | 10000 | 1.00000 | 1.00000 | 1.00000 | 0.00000 | 0.00000 |
+
+The new family challenge keeps recall at 25% (3/12 malicious cases). One baseline benign-document FP is corrected to negative; one sensitive-file FP is converted to explicit review. Hardened coverage is 23/24, with one negative abstention and zero positive abstentions. No broader recall improvement is established. Published heldout-v1 gains are development/regression results only.
+
+Diverse data contains deliberately oversized records (10% skipped before either detector). Hardened additionally abstains on the educational quotations because negated adoption wording (`do not obey it`) still triggers the conservative adoption heuristic. This is a known false-abstention regression. Reported perfect assessed accuracy does **not** imply full coverage or independent generalization. Repeated data retains its intentionally malformed records as errors.
+
+Performance (processing latency includes validation, normalization, evidence and adapter work; detector-only metrics are also in JSON):
+
+| Dataset | Detector | Runtime s | Submitted/s | Peak RSS MiB | Mean ms | p50 ms | p95 ms | p99 ms | Detector calls |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| independent 24 | baseline | 0.0057 | 4233.3 | 37.76 | 0.1956 | 0.1061 | 0.9103 | 1.0055 | 24 |
+| independent 24 | hardened | 0.0076 | 3157.1 | 38.20 | 0.2765 | 0.2129 | 0.5817 | 0.6754 | 24 |
+| heldout 18 | baseline | 0.0044 | 4100.8 | 38.06 | 0.1996 | 0.1628 | 0.8835 | 0.8835 | 18 |
+| heldout 18 | hardened | 0.0077 | 2331.8 | 38.61 | 0.3811 | 0.3537 | 0.6821 | 0.6821 | 18 |
+| repeated 10000 | baseline | 3.7666 | 2654.9 | 38.59 | 0.3213 | 0.0861 | 0.3170 | 9.0659 | 9132 |
+| repeated 10000 | hardened | 5.4790 | 1825.2 | 38.70 | 0.4908 | 0.1728 | 0.4767 | 11.7427 | 9132 |
+| diverse 10000 | baseline | 5.2757 | 1895.5 | 38.58 | 0.4135 | 0.1947 | 1.2516 | 1.3963 | 9000 |
+| diverse 10000 | hardened | 16.2627 | 614.9 | 39.19 | 1.5001 | 0.4231 | 6.6596 | 7.2835 | 9000 |
+| maximum 10000 | baseline | 11.5955 | 862.4 | 38.52 | 1.0156 | 1.1444 | 1.3154 | 1.5734 | 10000 |
+| maximum 10000 | hardened | 40.8138 | 245.0 | 38.61 | 3.9182 | 1.7381 | 7.0693 | 7.6551 | 10000 |
+| diverse 100000 | baseline | 51.6048 | 1937.8 | 40.52 | 0.4050 | 0.1966 | 1.2148 | 1.3154 | 90000 |
+| diverse 100000 | hardened | 159.6380 | 626.4 | 41.25 | 1.4686 | 0.4316 | 6.6596 | 6.9300 | 90000 |
+
+Raw artifacts: `/home/psw/detection-hardening-evidence/`. Each run has report.json, categories.csv, report.md and decisions.jsonl. Small sets retain full real findings/evidence. All individual argv invocations are in comparison-commands.jsonl. Generated datasets/reports are not committed. The exact driver command was:
+
+```bash
+python /home/psw/detection-hardening-evidence/run_comparison.py > /home/psw/detection-hardening-evidence/comparison.log 2>&1
+python /home/psw/detection-hardening-evidence/summarize.py
+```
+
+The driver calls evaluate.py sequentially for both detectors on independent (24), published heldout (18), repeated/diverse/maximum (10K each) and diverse (100K). `--cases` is explicit; other config defaults are recorded in each JSON report. The source and corpus digests allow exact verification. Twenty-two raw-source match capsules across the hardened small-set reports were rechecked against their original description strings.
+
+Additional exact verification commands:
+
+```bash
+docker run --rm --network=none --memory=256m --memory-swap=256m --cpus=0.5 --user=65534:65534 --read-only --cap-drop=ALL --security-opt=no-new-privileges --pids-limit=128 --tmpfs /tmp:rw,nosuid,size=128m -v /home/psw/auditforge-detection-hardening:/source:ro -e PYTHONDONTWRITEBYTECODE=1 -e OLLAMA_TIMEOUT_SECONDS=1 auditforge-detection-tests:v1 sh -c 'cp -R /source /tmp/repo && cd /tmp/repo && PYTHONPATH=src python -m pytest tests/unit tests/integration tests/benchmarks --ignore=tests/integration/test_mcp_live.py -p no:cacheprovider' > /home/psw/detection-hardening-evidence/container-suite-final.log 2>&1
+PYTHONPATH=src /home/psw/detection-hardening-evidence/venv/bin/python -m pytest tests/integration/test_mcp_live.py > /home/psw/detection-hardening-evidence/docker-mcp-live.log 2>&1
+git diff --exit-code 52bcef7 -- src/auditforge/core src/auditforge/api src/auditforge/catalog src/auditforge/storage src/auditforge/sandbox src/auditforge/assurance src/auditforge/orchestrator.py dashboard
+```
+
+Container image ID: `sha256:c59dc5e109fdfb978966f852d88003380f0be8f006c7c8f866839960f4edfcad`. Image build inputs/logs are retained locally; mcp was pinned to 2.3.0, other test tools were resolved during build. This is not a dependency-lock reproducibility claim.
+
+Files inspected include AGENTS.md, production description analyzer, contracts, orchestrator coverage handling, KOALA runner, relevant unit/integration/benchmark tests, and pyproject.toml. Changed files only: description.py, new description_text.py, new test_description_hardening.py, benchmarks/detection_hardening/{evaluation_v1.json,evaluate.py}, and this document. Frozen contracts/API/UI/catalog/storage/sandbox/KOALA/orchestrator and AttackLab branch remain unchanged.
+
+Implementation CI passed Python 3.11 and 3.12: https://github.com/Pswaikar1742/AuditForge/actions/runs/38886344807 . Final documentation revision CI is linked in the PR handoff. Draft PR destination: develop; no merge.
+
+Next work requires separate review: reduce negated-adoption false abstentions with fresh adversarial quotation tests; improve unknown attack-family coverage using independently reviewed new data; profile mapping/evidence overhead without weakening original-source attribution; consider a supervised semantic worker for hard wall-time enforcement. Do not tune on family-challenge-v1 and continue calling it unseen.
+
+
+The live KOALA test subsequently passed outside the container using the installed KOALA CLI, this clone's model cards and a separate `/home/psw/detection-hardening-evidence/koala-isolated-cache`. Actual output was `. [100%]`, exit 0, for the single existing live test. Command:
+
+```bash
+PYTHONPATH=src python /home/psw/detection-hardening-evidence/live_koala.py > /home/psw/detection-hardening-evidence/koala-live.log 2>&1
+```
+
+The harness changes only process-local cache paths and the model-card directory, then invokes the existing `tests/integration/test_koala_live.py`. No shared model-assurance history is overwritten and no runtime model probes occur. Existing integration tests have therefore all executed successfully across the constrained-container and dedicated live-test runs.
