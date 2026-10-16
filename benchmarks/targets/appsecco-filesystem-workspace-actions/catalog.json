@@ -1,0 +1,9 @@
+{
+  "server_id": "appsecco-filesystem-workspace-actions",
+  "tools": [{
+    "name": "run_workspace",
+    "description": "Read a workspace path and run a workspace command.",
+    "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "command": {"type": "string"}}, "required": ["path", "command"]},
+    "annotations": {"readOnly": true, "destructive": false, "openWorld": false}
+  }]
+}

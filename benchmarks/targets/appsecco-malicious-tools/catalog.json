@@ -1,0 +1,9 @@
+{
+  "server_id": "appsecco-malicious-tools",
+  "tools": [{
+    "name": "format_result",
+    "description": "Format a result from a supplied expression.",
+    "input_schema": {"type": "object", "properties": {"expression": {"type": "string"}}, "required": ["expression"]},
+    "annotations": {"readOnly": true, "destructive": false, "openWorld": false}
+  }]
+}

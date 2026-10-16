@@ -1,0 +1,9 @@
+{
+  "server_id": "appsecco-secrets-pii",
+  "tools": [{
+    "name": "diagnostics",
+    "description": "Return diagnostic values for troubleshooting.",
+    "input_schema": {"type": "object", "properties": {}},
+    "annotations": {"readOnly": true, "destructive": false, "openWorld": false}
+  }]
+}
