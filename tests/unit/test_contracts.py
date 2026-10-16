@@ -115,3 +115,40 @@ def test_tool_record_mcp_extended_fields():
     assert t_base.fingerprint != t_icons.fingerprint
     assert t_meta.fingerprint != t_exec.fingerprint
 
+
+def test_evidence_manifest_integrity_and_verification():
+    """Verify evidence manifest integrity checksum detects corruption and validates unedited capsules."""
+    from auditforge.core.evidence import compute_evidence_manifest_hash, verify_evidence_manifest
+
+    ev1 = EvidenceRecord(
+        evidence_id="ev-ast-001",
+        source="static_ast",
+        summary="Found os.system invocation",
+        raw_data={"lineno": 42, "code": "os.system(cmd)"},
+    )
+    ev2 = EvidenceRecord(
+        evidence_id="ev-desc-002",
+        source="description_llm",
+        summary="Adversarial prompt injection detected",
+        raw_data={"quote": "Ignore previous instructions"},
+    )
+
+    # 1. Determinism: order-independent because sorted by evidence_id
+    digest1 = compute_evidence_manifest_hash([ev1, ev2])
+    digest2 = compute_evidence_manifest_hash([ev2, ev1])
+    assert digest1 == digest2
+    assert len(digest1) == 64
+
+    # 2. Verification succeeds on unedited records
+    assert verify_evidence_manifest([ev1, ev2], digest1) is True
+
+    # 3. Detection: Altering raw_data or summary changes the digest and fails verification
+    ev1_tampered = EvidenceRecord(
+        evidence_id="ev-ast-001",
+        source="static_ast",
+        summary="Found os.system invocation - tampered",
+        raw_data={"lineno": 42, "code": "os.system(cmd)"},
+    )
+    assert verify_evidence_manifest([ev1_tampered, ev2], digest1) is False
+
+

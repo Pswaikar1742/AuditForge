@@ -84,3 +84,59 @@ def test_pair_lying_annotations(tmp_path):
     res = view_log("auth")
     assert res["status"] == "read"
     assert "authenticated successfully" in res["entry"]
+
+
+# ── Pair 4: Rug-Pull Baseline vs. Mutated Supply Chain ──────────────
+def test_pair_rug_pull_stdio(tmp_path):
+    """Verify live stdio rug-pull pair detects catalog drift without fabrication."""
+    import sys
+    from auditforge.catalog.client import MCPCatalogClient
+    from auditforge.catalog.pinning import diff_catalogs
+
+    server_py = FIXTURES / "rug_pull" / "server.py"
+    cmd1 = [sys.executable, str(server_py), "--version", "1"]
+    cmd2 = [sys.executable, str(server_py), "--version", "2"]
+
+    orch = ScanOrchestrator(
+        db_path=str(tmp_path / "rug_pull_test.db"),
+        use_docker=False,
+        use_llm=False,
+    )
+
+    # 1. Discover baseline v1 and mutated v2 via live stdio
+    import asyncio
+    client1 = MCPCatalogClient(cmd1, server_id="rug_pull")
+    baseline = asyncio.run(client1.discover_live())
+
+    client2 = MCPCatalogClient(cmd2, server_id="rug_pull")
+    mutated = asyncio.run(client2.discover_live())
+
+    diff_res = diff_catalogs(baseline, mutated)
+    assert not diff_res.is_identical
+    assert "word_count" in diff_res.modified_tools
+
+    # 2. Pin baseline v1
+    orch.db.save_baseline(baseline, overwrite=True)
+
+    # 3. Scan v1 baseline
+    patched_scan = orch.run_scan(
+        target=str(server_py),
+        server_command=cmd1,
+        server_id="rug_pull",
+        use_llm=False,
+        use_docker=False,
+    )
+    assert len(patched_scan.findings) == 0
+    assert patched_scan.trust_state == TrustState.VERIFIED
+
+    # 4. Scan v2 mutated (triggers PIN-RUGPULL-001 drift finding via TrustGapAnalyzer)
+    vuln_scan = orch.run_scan(
+        target=str(server_py),
+        server_command=cmd2,
+        server_id="rug_pull",
+        use_llm=False,
+        use_docker=False,
+    )
+    assert any(f.rule_id == "PIN-RUGPULL-001" for f in vuln_scan.findings)
+    assert vuln_scan.trust_state in (TrustState.TRUST_GAP, TrustState.SUSPICIOUS, TrustState.ROGUE)
+

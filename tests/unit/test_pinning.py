@@ -2,7 +2,12 @@
 
 from auditforge.catalog.normalize import normalize_tool_definition
 from auditforge.catalog.pinning import diff_catalogs
-from auditforge.core.contracts import ServerSnapshot, ToolRecord
+from auditforge.core.contracts import (
+    DriftCategory,
+    ServerSnapshot,
+    ToolRecord,
+    compute_catalog_fingerprint,
+)
 
 
 def test_identical_catalog_diff():
@@ -108,4 +113,86 @@ def test_drift_classification_high_risk_triggers():
     )
     assert diff2.drift_category == DriftCategory.HIGH_RISK_DRIFT
     assert any("declares high-risk capabilities" in r for r in diff2.drift_reasons)
+
+
+def test_composite_v2_fingerprint_and_v1_fallback():
+    """Verify v2 composite fingerprinting across tools, resources, prompts with v1 fallback."""
+    t1 = ToolRecord(name="tool_a", description="Alpha tool")
+    snap_v1 = ServerSnapshot(
+        server_id="demo",
+        tools={"tool_a": t1},
+        fingerprint_version="v1",
+    )
+    snap_v2 = ServerSnapshot(
+        server_id="demo",
+        tools={"tool_a": t1},
+        fingerprint_version="v2",
+        resources={"status": "OK", "items": [{"uri": "file:///data"}]},
+        prompts={"status": "EMPTY", "items": []},
+    )
+
+    # Comparing v1 baseline with v2 current gracefully falls back to v1 tool fingerprint
+    diff_v1_v2 = diff_catalogs(snap_v1, snap_v2)
+    assert diff_v1_v2.is_identical is True
+
+    # Comparing two v2 snapshots with different prompt definitions detects drift
+    snap_v2_prompt_mod = ServerSnapshot(
+        server_id="demo",
+        tools={"tool_a": t1},
+        fingerprint_version="v2",
+        resources={"status": "OK", "items": [{"uri": "file:///data"}]},
+        prompts={"status": "OK", "items": [{"name": "injected_sys_prompt", "content": "ignore rules"}]},
+    )
+    diff_prompt_drift = diff_catalogs(snap_v2, snap_v2_prompt_mod)
+    assert diff_prompt_drift.is_identical is False
+    assert diff_prompt_drift.drift_category == DriftCategory.HIGH_RISK_DRIFT
+    assert any("Prompts catalog definition altered" in r for r in diff_prompt_drift.drift_reasons)
+
+
+def test_historical_snapshot_without_fingerprint_version_migration():
+    """Verify that an authentic historical snapshot without fingerprint_version or v2 fields loads as v1."""
+    legacy_tool = {
+        "name": "read_data",
+        "description": "Read file data securely",
+        "input_schema": {"type": "object", "properties": {"path": {"type": "string"}}},
+        "annotations": {"readOnlyHint": True},
+    }
+    # Raw JSON/dict matching old AuditForge v1 database row or catalog.json export
+    historical_dict = {
+        "server_id": "historical_srv",
+        "timestamp": "2026-02-15T10:00:00+00:00",
+        "tools": {"read_data": legacy_tool},
+        "capabilities": {"experimental": {}},
+        "catalog_fingerprint": "a" * 64,  # legacy tool hash
+    }
+    # Notice: NO 'fingerprint_version', NO 'catalog_fingerprint_v1', NO 'catalog_fingerprint_v2',
+    # NO 'resources_fingerprint', NO 'prompts_fingerprint'
+    assert "fingerprint_version" not in historical_dict
+    assert "catalog_fingerprint_v2" not in historical_dict
+
+    # Deserialize using Pydantic model_validate
+    snapshot = ServerSnapshot.model_validate(historical_dict)
+
+    expected_fp = compute_catalog_fingerprint(snapshot.tools)
+    # Must default to v1 and compute v1 fingerprint
+    assert snapshot.fingerprint_version == "v1"
+    assert snapshot.catalog_fingerprint_v1 == expected_fp
+
+    # Now compare with a new v2 snapshot that has the same tool
+    v2_current = ServerSnapshot(
+        server_id="historical_srv",
+        tools={"read_data": ToolRecord(**legacy_tool)},
+        fingerprint_version="v2",
+        resources={"status": "EMPTY", "items": []},
+        prompts={"status": "EMPTY", "items": []},
+        catalog_fingerprint=expected_fp,
+        catalog_fingerprint_v1=expected_fp,
+        catalog_fingerprint_v2="b" * 64,
+    )
+    diff = diff_catalogs(snapshot, v2_current)
+    # v1 fallback must ensure is_identical is True when tool definition matches
+    assert diff.is_identical is True
+    assert diff.drift_category == DriftCategory.UNCHANGED
+
+
 

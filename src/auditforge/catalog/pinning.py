@@ -119,11 +119,33 @@ def diff_catalogs(baseline: ServerSnapshot, current: ServerSnapshot) -> CatalogD
                 }
             modified[name] = field_diffs
 
+    # Resources and Prompts surface drift detection
+    b_res_fp = getattr(baseline, "resources_fingerprint", "")
+    c_res_fp = getattr(current, "resources_fingerprint", "")
+    b_prompts_fp = getattr(baseline, "prompts_fingerprint", "")
+    c_prompts_fp = getattr(current, "prompts_fingerprint", "")
+
+    resources_changed = bool(b_res_fp and c_res_fp and b_res_fp != c_res_fp)
+    prompts_changed = bool(b_prompts_fp and c_prompts_fp and b_prompts_fp != c_prompts_fp)
+
+    # Version-aware fingerprint comparison with v1 fallback
+    b_ver = getattr(baseline, "fingerprint_version", "v1")
+    c_ver = getattr(current, "fingerprint_version", "v1")
+
+    if b_ver == "v2" and c_ver == "v2":
+        baseline_fp = getattr(baseline, "catalog_fingerprint_v2", "") or baseline.catalog_fingerprint
+        current_fp = getattr(current, "catalog_fingerprint_v2", "") or current.catalog_fingerprint
+    else:
+        baseline_fp = getattr(baseline, "catalog_fingerprint_v1", "") or baseline.catalog_fingerprint
+        current_fp = getattr(current, "catalog_fingerprint_v1", "") or current.catalog_fingerprint
+
     is_identical = (
-        baseline.catalog_fingerprint == current.catalog_fingerprint
+        baseline_fp == current_fp
         and not added
         and not removed
         and not modified
+        and not resources_changed
+        and not prompts_changed
     )
 
     drift_category, drift_reasons = classify_drift(
@@ -135,10 +157,20 @@ def diff_catalogs(baseline: ServerSnapshot, current: ServerSnapshot) -> CatalogD
         is_identical=is_identical,
     )
 
+    if resources_changed:
+        drift_reasons.append("Resources catalog definition altered since baseline approval")
+        if drift_category == DriftCategory.UNCHANGED:
+            drift_category = DriftCategory.CHANGED_REVIEW
+
+    if prompts_changed:
+        drift_reasons.append("Prompts catalog definition altered since baseline approval (potential prompt override drift)")
+        if drift_category in {DriftCategory.UNCHANGED, DriftCategory.CHANGED_REVIEW}:
+            drift_category = DriftCategory.HIGH_RISK_DRIFT
+
     return CatalogDiff(
         server_id=current.server_id,
-        baseline_fingerprint=baseline.catalog_fingerprint,
-        current_fingerprint=current.catalog_fingerprint,
+        baseline_fingerprint=baseline_fp,
+        current_fingerprint=current_fp,
         is_identical=is_identical,
         drift_category=drift_category,
         drift_reasons=drift_reasons,

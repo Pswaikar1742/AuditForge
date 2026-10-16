@@ -27,7 +27,12 @@ from auditforge.core.contracts import (
     Severity,
     TrustState,
 )
-from auditforge.core.evidence import current_iso_timestamp, generate_evidence_id, generate_finding_id
+from auditforge.core.evidence import (
+    compute_evidence_manifest_hash,
+    current_iso_timestamp,
+    generate_evidence_id,
+    generate_finding_id,
+)
 from auditforge.reports.json_report import export_json_report
 from auditforge.reports.markdown import generate_markdown_report
 from auditforge.sandbox.probe_cases import generate_probe_cases
@@ -86,14 +91,24 @@ class ScanOrchestrator:
         source_path: Optional[str] = None,
         catalog_path: Optional[str] = None,
         server_id: Optional[str] = None,
+        use_llm: Optional[bool] = None,
+        use_docker: Optional[bool] = None,
     ) -> ScanResult:
-        """Execute full audit pipeline on target server."""
+        """Execute full audit pipeline on target server with per-scan immutable configuration."""
+        effective_use_llm = self.use_llm if use_llm is None else use_llm
+        effective_use_docker = self.use_docker if use_docker is None else use_docker
+
         scan_id = f"scan-{uuid.uuid4().hex[:12]}"
         started_at = current_iso_timestamp()
 
         target_path = Path(target) if target else None
         snapshot: Optional[ServerSnapshot] = None
         resolved_source_path: Optional[str] = source_path
+        if not resolved_source_path and target_path:
+            if target_path.is_file() and target_path.suffix == ".py":
+                resolved_source_path = str(target_path)
+            elif target_path.is_dir() and (target_path / "server.py").exists():
+                resolved_source_path = str(target_path / "server.py")
         all_findings: List[Finding] = []
         all_evidence: List[EvidenceRecord] = []
         probe_outcomes: List[ProbeOutcome] = []
@@ -186,7 +201,7 @@ class ScanOrchestrator:
         # 3. Description Intelligence (Layer 0 Heuristics + Layer 1/2 LLM)
         if snapshot:
             try:
-                desc_analyzer = DescriptionAnalyzer(use_llm=self.use_llm)
+                desc_analyzer = DescriptionAnalyzer(use_llm=effective_use_llm)
                 had_llm_failure = False
                 for tool_name, tool in snapshot.tools.items():
                     d_findings, d_evidence = desc_analyzer.analyze_tool(tool)
@@ -204,7 +219,7 @@ class ScanOrchestrator:
             stage_coverage["description_intelligence"] = "SKIPPED"
 
         # 4. Container Dynamic Probing
-        if self.use_docker and resolved_source_path and snapshot:
+        if effective_use_docker and resolved_source_path and snapshot:
             try:
                 runner = DockerSandboxRunner(server_path=resolved_source_path)
                 for tool_name, tool in snapshot.tools.items():
@@ -261,7 +276,7 @@ class ScanOrchestrator:
             baseline = self.db.get_baseline(sid)
             if baseline:
                 diff = diff_catalogs(baseline, snapshot)
-                stage_coverage["baseline_pinning"] = "PASS"
+                stage_coverage["baseline_pinning"] = "PASS" if diff.is_identical else diff.drift_category.value
             else:
                 stage_coverage["baseline_pinning"] = "NOT_PINNED"
         else:
@@ -286,8 +301,10 @@ class ScanOrchestrator:
         else:
             stage_coverage["trust_gap"] = "SKIPPED"
 
-        if all_evidence:
-            stage_coverage["evidence_sealing"] = "PASS"
+        # Cryptographic Evidence Sealing Manifest Hash
+        manifest_hash = compute_evidence_manifest_hash(all_evidence) if all_evidence else None
+        if manifest_hash:
+            stage_coverage["evidence_sealing"] = "SEALED"
         else:
             stage_coverage["evidence_sealing"] = "EMPTY"
 
@@ -316,6 +333,7 @@ class ScanOrchestrator:
             diff=diff,
             findings=all_findings,
             evidence=all_evidence,
+            evidence_manifest_hash=manifest_hash,
             probe_outcomes=probe_outcomes,
             stage_coverage=stage_coverage,
             scan_mode=scan_mode,

@@ -4,6 +4,7 @@ REST API for MCP Security Auditing, Evidence Capsules, and Catalog Pinning.
 """
 
 import asyncio
+import os
 from pathlib import Path
 import sys
 from typing import Any, Dict, List, Optional, Tuple
@@ -14,7 +15,7 @@ from pydantic import BaseModel
 
 from auditforge.assurance.koala import KoalaAssuranceRunner, KoalaReport
 from auditforge.config import config
-from auditforge.core.contracts import CatalogDiff, ScanResult, ServerSnapshot
+from auditforge.core.contracts import CatalogDiff, ScanResult, ServerSnapshot, TrustState
 from auditforge.catalog.client import MCPCatalogClient
 from auditforge.catalog.pinning import diff_catalogs
 from auditforge.orchestrator import ScanOrchestrator
@@ -47,10 +48,15 @@ _db_instance: Optional[Database] = None
 _orchestrator_instance: Optional[ScanOrchestrator] = None
 
 
-def get_db() -> Database:
+def get_db() -> Any:
     global _db_instance
     if _db_instance is None:
-        _db_instance = Database(config.DB_PATH)
+        db_url = os.getenv("DATABASE_URL")
+        if db_url and (db_url.startswith("postgresql://") or db_url.startswith("postgres://")):
+            from auditforge.storage.pg_database import PostgresDatabase
+            _db_instance = PostgresDatabase(db_url)
+        else:
+            _db_instance = Database(config.DB_PATH)
     return _db_instance
 
 
@@ -237,6 +243,45 @@ FIXTURES_META = [
 
 REGISTERED_FIXTURE_IDS = {f["id"]: f["path"] for f in FIXTURES_META}
 
+COMPARISON_PAIRS_META = [
+    {
+        "id": "pair_rogue_server",
+        "title": "Command Injection vs. Safe In-Memory Diagnostic",
+        "description": "Demonstrates detection of unauthorized subprocess and os.system shell calls in positive control server, and their complete elimination in the safe diagnostic version.",
+        "vulnerable_target_id": "rogue_server",
+        "patched_target_id": "rogue_server_patched",
+        "key_vulnerability": "AST-SHELL-001 (os.system) & AST-SUBPROCESS-001 (subprocess.Popen)",
+        "remediation_summary": "Replaced external shell execution with deterministic internal in-memory diagnostic logic.",
+    },
+    {
+        "id": "pair_poisoned_description",
+        "title": "Adversarial Prompt Injection vs. Clean Tool Metadata",
+        "description": "Demonstrates detection of prompt injection directives and credential exfiltration instructions hidden in tool descriptions, and clean verified metadata in the patched version.",
+        "vulnerable_target_id": "poisoned_description",
+        "patched_target_id": "poisoned_description_patched",
+        "key_vulnerability": "DESC-INJECT-001 (Directive Override) & DESC-EXFIL-001 (Secret Exfiltration)",
+        "remediation_summary": "Sanitized tool description to state only legitimate currency conversion parameters.",
+    },
+    {
+        "id": "pair_lying_annotations",
+        "title": "Lying readOnly Annotations vs. Genuine Read-Only",
+        "description": "Demonstrates AuditForge's USP: Trust Gap reconciler catching tools declaring readOnly=True in annotations while executing destructive file removals in implementation.",
+        "vulnerable_target_id": "lying_annotations",
+        "patched_target_id": "lying_annotations_patched",
+        "key_vulnerability": "TRUST-GAP-001 (Contract-to-behavior discrepancy) & AST-FILE-002 (os.remove)",
+        "remediation_summary": "Eliminated destructive file removal and enforced strict read-only file viewing.",
+    },
+    {
+        "id": "pair_rug_pull",
+        "title": "Supply Chain Baseline Pinning vs. Rug-Pull Mutated Catalog",
+        "description": "Demonstrates cryptographic SHA-256 baseline pinning catching unauthorized post-approval capabilities and backdoor tools.",
+        "vulnerable_target_id": "rug_pull",
+        "patched_target_id": "clean_reader",
+        "key_vulnerability": "PIN-RUGPULL-001 (Post-approval capability drift / added backdoor_eval)",
+        "remediation_summary": "Strict catalog hash verification rejects server until re-evaluated and approved.",
+    },
+]
+
 
 class HealthResponse(BaseModel):
     status: str
@@ -358,6 +403,44 @@ def export_scan_report(scan_id: str, format: str = "json") -> Response:
         raise HTTPException(status_code=400, detail=f"Unsupported format '{format}'. Use 'json' or 'markdown'.")
 
 
+@app.get("/api/reports")
+def list_saved_reports() -> List[Dict[str, Any]]:
+    """List all saved Markdown audit reports in scan_reports/ and reports/ directories."""
+    reports = []
+    seen = set()
+    for search_dir in [Path("scan_reports"), Path("reports")]:
+        if search_dir.exists():
+            for f in sorted(search_dir.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True):
+                if f.name in seen:
+                    continue
+                seen.add(f.name)
+                try:
+                    stat = f.stat()
+                    with open(f, "r", encoding="utf-8") as fp:
+                        header = "".join([fp.readline() for _ in range(6)]).strip()
+                    reports.append({
+                        "filename": f.name,
+                        "scan_id": f.stem,
+                        "size_bytes": stat.st_size,
+                        "modified_at": stat.st_mtime,
+                        "preview": header,
+                    })
+                except Exception:
+                    continue
+    return reports[:50]
+
+
+@app.get("/api/reports/{filename}")
+def get_report_content(filename: str) -> Response:
+    """Return raw Markdown content of a saved report."""
+    safe_name = Path(filename).name
+    for search_dir in [Path("scan_reports"), Path("reports")]:
+        fpath = search_dir / safe_name
+        if fpath.exists():
+            return Response(content=fpath.read_text(encoding="utf-8"), media_type="text/markdown")
+    raise HTTPException(status_code=404, detail=f"Report '{filename}' not found")
+
+
 KNOWN_VULNERABLE_SERVERS = {"rogue_server", "poisoned_description", "lying_annotations"}
 
 
@@ -372,11 +455,10 @@ def trigger_scan(req: ScanRequest) -> Dict[str, Any]:
     """Trigger a security audit scan on an authorized registered target ID."""
     safe_path, verified_target_id = _validate_safe_target(req.server_path, req.target_id)
     orch = get_orchestrator()
-    orch.use_llm = req.use_llm
 
     try:
         # Ignore client-controlled server_name to derive trusted server identity strictly from allowlisted target ID
-        res = orch.run_scan(target=safe_path, server_id=verified_target_id)
+        res = orch.run_scan(target=safe_path, server_id=verified_target_id, use_llm=req.use_llm)
         return _format_scan_dict(res)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Audit scan failed: {str(e)}")
@@ -554,6 +636,186 @@ def live_rug_pull_demo() -> Dict[str, Any]:
     }
 
 
+# ── Vulnerable-to-Patched Comparison Endpoints ────────────────────
+@app.get("/api/pairs")
+def list_comparison_pairs() -> List[Dict[str, Any]]:
+    """Return all configured vulnerable vs. remediated/patched demonstration pairs."""
+    return COMPARISON_PAIRS_META
+
+
+COMPARISON_RESULTS_CACHE: Dict[str, Dict[str, Any]] = {}
+
+
+@app.get("/api/compare/{pair_id}")
+def get_pair_comparison(pair_id: str) -> Dict[str, Any]:
+    """Retrieve previously executed side-by-side comparison result.
+
+    Adheres to REST semantics: GET retrieves existing results without triggering heavy scans.
+    Use POST /api/compare/{pair_id} to trigger or re-run the comparison scans.
+    """
+    pair = next((p for p in COMPARISON_PAIRS_META if p["id"] == pair_id), None)
+    if not pair:
+        raise HTTPException(status_code=404, detail=f"Comparison pair '{pair_id}' not found")
+
+    cached = COMPARISON_RESULTS_CACHE.get(pair_id)
+    if not cached:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Comparison for pair '{pair_id}' has not been executed yet. Run POST /api/compare/{pair_id} to perform the scan.",
+        )
+    return cached
+
+
+@app.post("/api/compare/{pair_id}")
+def compare_pair(pair_id: str) -> Dict[str, Any]:
+    """Execute side-by-side verification on a vulnerable target and its remediated counterpart."""
+    pair = next((p for p in COMPARISON_PAIRS_META if p["id"] == pair_id), None)
+    if not pair:
+        raise HTTPException(status_code=404, detail=f"Comparison pair '{pair_id}' not found")
+
+    orch = get_orchestrator()
+
+    if pair_id == "pair_rug_pull":
+        server_py = Path("fixtures/rug_pull/server.py").resolve()
+        if not server_py.exists():
+            raise HTTPException(status_code=404, detail="fixtures/rug_pull/server.py not found")
+
+        cmd1 = [sys.executable, str(server_py), "--version", "1"]
+        cmd2 = [sys.executable, str(server_py), "--version", "2"]
+
+        # 1. Discover baseline v1 and mutated v2 via authentic live stdio
+        client1 = MCPCatalogClient(cmd1, server_id="rug_pull")
+        baseline = asyncio.run(client1.discover_live())
+
+        client2 = MCPCatalogClient(cmd2, server_id="rug_pull")
+        mutated = asyncio.run(client2.discover_live())
+
+        diff_res = diff_catalogs(baseline, mutated)
+
+        # 2. Pin approved baseline in DB
+        orch.db.save_baseline(baseline, overwrite=True)
+
+        # 3. Execute genuine scan on the approved baseline (v1)
+        patched_scan = orch.run_scan(
+            target=str(server_py),
+            server_command=cmd1,
+            server_id="rug_pull",
+            use_llm=False,
+            use_docker=False,
+        )
+
+        # 4. Execute genuine scan on the mutated server (v2) which diffs against baseline
+        vuln_scan = orch.run_scan(
+            target=str(server_py),
+            server_command=cmd2,
+            server_id="rug_pull",
+            use_llm=False,
+            use_docker=False,
+        )
+
+        vuln_rules = {f.rule_id for f in vuln_scan.findings}
+        patched_rules = {f.rule_id for f in patched_scan.findings}
+        eliminated_rules = sorted(list(vuln_rules - patched_rules))
+
+        result = {
+            "pair_id": pair["id"],
+            "title": pair["title"],
+            "description": pair["description"],
+            "key_vulnerability": pair["key_vulnerability"],
+            "remediation_summary": pair["remediation_summary"],
+            "vulnerable": {
+                "target_id": "rug_pull_v2",
+                "server_name": "rug_pull (v2 Mutated)",
+                "trust_state": vuln_scan.trust_state.value if hasattr(vuln_scan.trust_state, "value") else str(vuln_scan.trust_state),
+                "findings_count": len(vuln_scan.findings),
+                "findings": [f.model_dump() for f in vuln_scan.findings],
+                "stage_coverage": vuln_scan.stage_coverage,
+                "evidence_manifest_hash": vuln_scan.evidence_manifest_hash,
+                "fingerprint": vuln_scan.snapshot.catalog_fingerprint if vuln_scan.snapshot else mutated.catalog_fingerprint,
+            },
+            "patched": {
+                "target_id": "rug_pull_v1",
+                "server_name": "rug_pull (v1 Approved Baseline)",
+                "trust_state": patched_scan.trust_state.value if hasattr(patched_scan.trust_state, "value") else str(patched_scan.trust_state),
+                "findings_count": len(patched_scan.findings),
+                "findings": [f.model_dump() for f in patched_scan.findings],
+                "stage_coverage": patched_scan.stage_coverage,
+                "evidence_manifest_hash": patched_scan.evidence_manifest_hash,
+                "fingerprint": patched_scan.snapshot.catalog_fingerprint if patched_scan.snapshot else baseline.catalog_fingerprint,
+            },
+            "comparison_delta": {
+                "eliminated_findings_count": len(eliminated_rules),
+                "eliminated_rule_ids": eliminated_rules,
+                "is_fully_remediated": (
+                    (patched_scan.trust_state == TrustState.VERIFIED or str(patched_scan.trust_state) == "VERIFIED")
+                    and len(patched_scan.findings) == 0
+                ),
+                "diff": diff_res.model_dump(),
+            },
+        }
+        COMPARISON_RESULTS_CACHE[pair_id] = result
+        return result
+
+    vuln_path = REGISTERED_FIXTURE_IDS.get(pair["vulnerable_target_id"])
+    patched_path = REGISTERED_FIXTURE_IDS.get(pair["patched_target_id"])
+
+    if not vuln_path or not patched_path:
+        raise HTTPException(status_code=400, detail="Pair target fixtures not registered")
+
+    vuln_scan = orch.run_scan(
+        target=str(Path(vuln_path).resolve()),
+        server_id=pair["vulnerable_target_id"],
+        use_llm=False,
+        use_docker=False,
+    )
+    patched_scan = orch.run_scan(
+        target=str(Path(patched_path).resolve()),
+        server_id=pair["patched_target_id"],
+        use_llm=False,
+        use_docker=False,
+    )
+
+    vuln_rules = {f.rule_id for f in vuln_scan.findings}
+    patched_rules = {f.rule_id for f in patched_scan.findings}
+    eliminated_rules = sorted(list(vuln_rules - patched_rules))
+
+    result = {
+        "pair_id": pair["id"],
+        "title": pair["title"],
+        "description": pair["description"],
+        "key_vulnerability": pair["key_vulnerability"],
+        "remediation_summary": pair["remediation_summary"],
+        "vulnerable": {
+            "target_id": pair["vulnerable_target_id"],
+            "server_name": vuln_scan.server_name,
+            "trust_state": vuln_scan.trust_state.value if hasattr(vuln_scan.trust_state, "value") else str(vuln_scan.trust_state),
+            "findings_count": len(vuln_scan.findings),
+            "findings": [f.model_dump() for f in vuln_scan.findings],
+            "stage_coverage": vuln_scan.stage_coverage,
+            "evidence_manifest_hash": vuln_scan.evidence_manifest_hash,
+        },
+        "patched": {
+            "target_id": pair["patched_target_id"],
+            "server_name": patched_scan.server_name,
+            "trust_state": patched_scan.trust_state.value if hasattr(patched_scan.trust_state, "value") else str(patched_scan.trust_state),
+            "findings_count": len(patched_scan.findings),
+            "findings": [f.model_dump() for f in patched_scan.findings],
+            "stage_coverage": patched_scan.stage_coverage,
+            "evidence_manifest_hash": patched_scan.evidence_manifest_hash,
+        },
+        "comparison_delta": {
+            "eliminated_findings_count": max(0, len(vuln_scan.findings) - len(patched_scan.findings)),
+            "eliminated_rule_ids": eliminated_rules,
+            "is_fully_remediated": (
+                (patched_scan.trust_state == TrustState.VERIFIED or str(patched_scan.trust_state) == "VERIFIED")
+                and len(patched_scan.findings) == 0
+            ),
+        },
+    }
+    COMPARISON_RESULTS_CACHE[pair_id] = result
+    return result
+
+
 # ── Sponsor KOALA Model Assurance Endpoints ───────────────────────
 class KoalaAuditRequest(BaseModel):
     frameworks: Optional[List[str]] = None
@@ -619,3 +881,136 @@ def trigger_model_assurance(req: KoalaAuditRequest) -> Dict[str, Any]:
         if "/home/" in clean_msg or "/run/media/" in clean_msg:
             clean_msg = clean_msg.split(":")[-1].strip()
         raise HTTPException(status_code=500, detail=f"KOALA assurance audit failed: {clean_msg}")
+
+
+# ── Security Intelligence & RAG Endpoints ─────────────────────────
+class IntelligenceSearchRequest(BaseModel):
+    query: str
+    top_k: int = 5
+    trust_tier: Optional[str] = None
+
+
+class ExplainFindingRequest(BaseModel):
+    finding: Dict[str, Any]
+    evidence_records: Optional[List[Dict[str, Any]]] = None
+    use_llm: bool = False
+
+
+@app.get("/api/intelligence/status")
+def get_intelligence_status() -> Dict[str, Any]:
+    """Return status and document metrics of the security knowledge corpus."""
+    from auditforge.intelligence.registry import get_knowledge_registry, CORPUS_VERSION
+    reg = get_knowledge_registry()
+    return {
+        "status": "ONLINE",
+        "corpus_version": CORPUS_VERSION,
+        "total_documents": len(reg.documents),
+        "total_chunks": reg.total_chunks,
+        "search_mode": "HYBRID_BM25_TRUST_WEIGHTED",
+        "supported_trust_tiers": ["OFFICIAL_SPEC", "SECURITY_ADVISORY", "AUDIT_PLAYBOOK"],
+    }
+
+
+@app.get("/api/intelligence/sources")
+def list_intelligence_sources() -> List[Dict[str, Any]]:
+    """Return all ingested authoritative security specifications and playbooks."""
+    from auditforge.intelligence.registry import get_knowledge_registry
+    return get_knowledge_registry().get_sources_catalog()
+
+
+@app.post("/api/intelligence/search")
+def search_intelligence(req: IntelligenceSearchRequest) -> Dict[str, Any]:
+    """Search the security knowledge base using hybrid BM25 and trust-tier ranking."""
+    from auditforge.intelligence.registry import get_knowledge_registry
+    reg = get_knowledge_registry()
+    chunks = reg.search(req.query, top_k=req.top_k, trust_tier=req.trust_tier)
+    return {
+        "query": req.query,
+        "total_matches": len(chunks),
+        "results": [c.to_dict() for c in chunks],
+    }
+
+
+@app.post("/api/intelligence/explain-finding")
+def explain_security_finding(req: ExplainFindingRequest) -> Dict[str, Any]:
+    """Generate grounded RAG explanation, CWE/OWASP mapping, and remediation playbook for a finding."""
+    from auditforge.intelligence.explainer import FindingExplainer
+    from auditforge.analyzers.providers import get_inference_provider, DisabledProvider
+
+    provider = get_inference_provider() if req.use_llm else DisabledProvider()
+    explainer = FindingExplainer(provider=provider)
+    result = explainer.explain(finding=req.finding, evidence_records=req.evidence_records)
+    return result
+
+
+# ── Asynchronous Scan Queue & Job Endpoints ─────────────────────────
+class SubmitScanJobRequest(BaseModel):
+    target: str
+    scan_type: str = "LIVE_SCAN"
+    use_llm: bool = False
+
+
+@app.post("/api/jobs/scans", status_code=202)
+def submit_async_scan(req: SubmitScanJobRequest) -> Dict[str, Any]:
+    """Enqueue an asynchronous scan task for background processing."""
+    from auditforge.queue.manager import get_queue_manager
+    manager = get_queue_manager()
+    job = manager.enqueue_scan(
+        target=req.target,
+        scan_type=req.scan_type,
+        options={"use_llm": req.use_llm},
+    )
+    return job
+
+
+@app.get("/api/jobs")
+def list_jobs(limit: int = 50) -> Dict[str, Any]:
+    """List recent scan jobs and operational queue metrics."""
+    from auditforge.queue.manager import get_queue_manager
+    manager = get_queue_manager()
+    jobs = manager.list_jobs(limit=limit)
+    metrics = manager.get_queue_metrics()
+    return {
+        "metrics": metrics,
+        "jobs": jobs,
+    }
+
+
+@app.get("/api/jobs/{job_id}")
+def get_job_status(job_id: str) -> Dict[str, Any]:
+    """Retrieve execution status and linked scan result for a job."""
+    from auditforge.queue.manager import get_queue_manager
+    manager = get_queue_manager()
+    job = manager.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+    scan_summary = None
+    if job.get("scan_id"):
+        db = get_db()
+        scan = db.get_scan_result(job["scan_id"])
+        if scan:
+            scan_summary = {
+                "scan_id": scan.scan_id,
+                "trust_state": scan.trust_state.value,
+                "findings_count": len(scan.findings),
+                "summary": scan.summary,
+            }
+
+    return {
+        "job": job,
+        "scan_summary": scan_summary,
+    }
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+def cancel_scan_job(job_id: str) -> Dict[str, Any]:
+    """Cancel a queued or running scan job."""
+    from auditforge.queue.manager import get_queue_manager
+    manager = get_queue_manager()
+    success = manager.cancel_job(job_id)
+    if not success:
+        raise HTTPException(status_code=400, detail=f"Unable to cancel job {job_id} (already completed or not found)")
+    return {"status": "CANCELLED", "job_id": job_id}
+
+
