@@ -26,10 +26,25 @@ class MCPCatalogClient:
 
     @classmethod
     def load_from_file(cls, file_path: str, server_id: Optional[str] = None) -> ServerSnapshot:
-        """Load catalog snapshot from a JSON file (used for fixtures and testing)."""
+        """Load catalog snapshot from a JSON file or directory containing catalog.json."""
         path = Path(file_path)
         if not path.exists():
-            raise MCPConnectionError(f"Catalog file not found: {file_path}")
+            raise MCPConnectionError(f"Catalog path not found: {file_path}")
+
+        if path.is_dir():
+            found = None
+            for cand in ["catalog.json", "catalog_v2.json", "catalog_v1.json"]:
+                if (path / cand).exists():
+                    found = path / cand
+                    break
+            if not found:
+                jsons = list(path.glob("*.json"))
+                if jsons:
+                    found = jsons[0]
+            if found:
+                path = found
+            else:
+                raise MCPConnectionError(f"No catalog JSON found in directory: {file_path}")
 
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)

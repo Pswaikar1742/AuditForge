@@ -175,13 +175,36 @@ class ScanResult(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     scan_id: str = Field(..., description="Unique scan run identifier")
+    id: Optional[str] = Field(default=None, description="Alias for scan_id for API compatibility")
+    server_name: Optional[str] = Field(default=None, description="Target server identifier")
     target: str = Field(..., description="Server command, file path, or catalog URI audited")
     started_at: str = Field(default_factory=current_iso_timestamp, description="Scan start time")
     completed_at: Optional[str] = Field(default=None, description="Scan completion time")
     trust_state: TrustState = Field(default=TrustState.UNKNOWN, description="Evaluated trust state")
+    scan_mode: str = Field(default="LIVE_SCAN", description="Audit mode: LIVE_SCAN or SNAPSHOT_ANALYSIS")
+    stage_coverage: Dict[str, str] = Field(
+        default_factory=lambda: {
+            "catalog_discovery": "PASS",
+            "static_ast": "PASS",
+            "description_intelligence": "PASS",
+            "dynamic_probing": "SKIPPED",
+            "baseline_pinning": "NOT_PINNED",
+        },
+        description="Execution status per stage: PASS, FAIL, ERROR, SKIPPED, NOT_PINNED",
+    )
     snapshot: Optional[ServerSnapshot] = Field(default=None, description="Discovered server catalog snapshot")
     diff: Optional[CatalogDiff] = Field(default=None, description="Catalog diff against baseline if available")
     findings: List[Finding] = Field(default_factory=list, description="All verified findings")
     evidence: List[EvidenceRecord] = Field(default_factory=list, description="Verifiable evidence capsules")
     probe_outcomes: List[ProbeOutcome] = Field(default_factory=list, description="Dynamic probe results")
     summary: str = Field(default="", description="High-level audit executive summary")
+
+    def model_post_init(self, __context: Any) -> None:
+        if not self.id:
+            self.id = self.scan_id
+        if not self.server_name:
+            if self.snapshot and self.snapshot.server_id:
+                self.server_name = self.snapshot.server_id
+            else:
+                self.server_name = Path(self.target).name
+

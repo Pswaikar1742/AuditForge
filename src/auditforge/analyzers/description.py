@@ -180,7 +180,7 @@ class DescriptionAnalyzer:
                     break
 
             # 5. Layer 2: Optional Open-Weight LLM Heuristic Classification (Ollama Qwen)
-            if self.use_llm and not any(f.rule_id == "DESC-003" for f in findings):
+            if self.use_llm:
                 llm_res = self._layer2_classify(text, tool.name, field_name)
                 if llm_res:
                     fnd, ev = llm_res
@@ -218,26 +218,35 @@ class DescriptionAnalyzer:
             )
             with urllib.request.urlopen(req, timeout=config.OLLAMA_TIMEOUT) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
-                response_text = data.get("response", "")
+                response_text = data.get("response", "").strip()
                 
-                m = re.search(r"\{[^{}]*\}", response_text)
-                if m:
-                    res_json = json.loads(m.group(0))
+                # Extract markdown codeblocks if present
+                clean_json = response_text
+                codeblock_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", response_text)
+                if codeblock_match:
+                    clean_json = codeblock_match.group(1).strip()
+
+                brace_start = clean_json.find("{")
+                brace_end = clean_json.rfind("}")
+                if brace_start != -1 and brace_end != -1 and brace_end > brace_start:
+                    candidate = clean_json[brace_start : brace_end + 1]
+                    res_json = json.loads(candidate)
                     if res_json.get("is_injection") is True:
-                        conf = float(res_json.get("confidence", 0.8))
-                        reason = res_json.get("reason", "Semantic prompt injection indicator detected.")
+                        conf = float(res_json.get("confidence", 0.85))
+                        reason = str(res_json.get("reason", "Semantic prompt injection or instruction override detected."))
                         raw_data = {
                             "tool": tool_name,
                             "field": field_name,
                             "model": self.model_name or config.OLLAMA_MODEL,
                             "llm_output": res_json,
+                            "raw_text_snippet": text[:300],
                         }
                         ev_id = generate_evidence_id("description_llm_heuristic", raw_data)
                         ev = EvidenceRecord(
                             evidence_id=ev_id,
                             source="description_llm_heuristic",
                             tool_name=tool_name,
-                            summary=f"Ollama {self.model_name or config.OLLAMA_MODEL} flagged prompt injection in {field_name}: {reason}",
+                            summary=f"Qwen ({self.model_name or config.OLLAMA_MODEL}) flagged prompt injection in {field_name}: {reason}",
                             raw_data=raw_data,
                         )
                         fnd = Finding(

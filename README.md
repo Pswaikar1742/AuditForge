@@ -345,7 +345,11 @@ ollama list
 
 ---
 
-## 📡 REST API Reference
+---
+
+## 📡 REST API Reference (PS02 Coordinated Contract)
+
+Full contract documentation: [docs/API_CONTRACT.md](file:///c:/Users/shlok/Downloads/OpenForge%20Hackathon/audit-forge/docs/API_CONTRACT.md)
 
 | Method | Endpoint | Description |
 |---|---|---|
@@ -354,9 +358,22 @@ ollama list
 | `GET` | `/api/fixtures` | Metadata list of the 5 synthetic competition acceptance fixtures |
 | `GET` | `/api/scans` | Paginated history of past security audit runs |
 | `GET` | `/api/scans/{id}` | Detailed scan record with linked Evidence Capsules and telemetry |
-| `POST`| `/api/scan` | Trigger a new security audit on a local directory, file, or fixture |
+| `POST`| `/api/scan` | Trigger a new security audit via `target_id`, directory path, or GitHub URL |
+| `POST`| `/api/pin` | Pin a catalog snapshot as an approved cryptographic baseline |
+| `POST`| `/api/diff` | Compare active catalog against baseline to detect supply chain drift (Rug Pull) |
 | `GET` | `/api/baselines` | List all pinned catalog snapshots and SHA-256 fingerprints |
 | `POST`| `/api/baselines/{id}/approve` | Promote a scanned snapshot to an approved baseline |
+
+---
+
+## 🌐 Modern Auditor Cockpit & Landing Hero Page
+
+AuditForge features a high-performance, dark-mode Auditor Cockpit built with React 18 & Vite:
+- **Landing Hero Page:** Central molten forge logo, threat landscape overview, one-click GitHub URL ingestion, and animated "LAUNCH AUDITOR COCKPIT" launchpad.
+- **Auditor Mission Control:** Live 7-stage isolation pipeline visualizer, evaluation presets, and direct Qwen 2.5 Coder heuristic toggle.
+- **Vulnerable-versus-Patched Comparison:** Interactive side-by-side comparison for supply chain drift and instant "Live Rug-Pull Test" simulation.
+- **5-Stage Assurance Coverage:** Explicit status indicators (`PASS`, `FAIL`, `ERROR`, `SKIPPED`, `NOT_PINNED`) across Catalog Discovery, Static AST, AI Heuristics, Dynamic Probing, and Baseline Pinning.
+- **External Benchmark Suite:** 8 reference-derived MCP architectures explicitly tagged `SOURCE-ONLY` to distinguish static models from live upstream servers.
 
 ---
 
@@ -376,3 +393,4 @@ In strict adherence to `AGENTS.md`:
 - **License:** Apache License 2.0.
 
 Developed by **Team InnoVision** for **OpenForge Hackathon 2026**.
+

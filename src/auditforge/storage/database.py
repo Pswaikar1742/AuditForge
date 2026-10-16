@@ -208,6 +208,10 @@ class Database:
                     item["findings"] = res_obj.get("findings", [])
                     item["catalog_hash"] = res_obj.get("snapshot", {}).get("catalog_fingerprint")
                     item["status"] = "COMPLETED" if res_obj.get("completed_at") else "PENDING"
+                    item["scan_mode"] = res_obj.get("scan_mode", "LIVE_SCAN")
+                    item["stage_coverage"] = res_obj.get("stage_coverage", {})
+                    if res_obj.get("server_name"):
+                        item["server_name"] = res_obj["server_name"]
                 except Exception:
                     item["findings"] = []
                 results.append(item)

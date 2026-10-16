@@ -15,8 +15,8 @@ class Config:
     
     # Open-Weight AI (Ollama)
     OLLAMA_HOST: str = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-    OLLAMA_MODEL: str = os.getenv("AUDITFORGE_OLLAMA_MODEL", os.getenv("OLLAMA_MODEL", "qwen2.5-coder:7b"))
-    OLLAMA_TIMEOUT: float = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "5.0"))
+    OLLAMA_MODEL: str = os.getenv("AUDITFORGE_OLLAMA_MODEL", os.getenv("OLLAMA_MODEL", "qwen2.5-coder:3b"))
+    OLLAMA_TIMEOUT: float = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "30.0"))
     
     # Sandbox (Docker)
     DOCKER_IMAGE: str = os.getenv("DOCKER_IMAGE", "auditforge-probe:latest")

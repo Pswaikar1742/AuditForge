@@ -39,7 +39,8 @@ class ScanOrchestrator:
         use_docker: bool = False,
         use_llm: bool = False,
     ):
-        self.db = Database(db_path or config.DB_PATH)
+        self.db_path = db_path or config.DB_PATH
+        self.db = Database(self.db_path)
         self.use_docker = use_docker
         self.use_llm = use_llm
         self.static_analyzer: Optional[StaticAnalyzer] = None
@@ -66,8 +67,33 @@ class ScanOrchestrator:
         all_evidence: List[EvidenceRecord] = []
         all_probe_outcomes: List[ProbeOutcome] = []
 
-        target_path = Path(target).resolve() if target else Path(".")
-        src_dir = Path(source_path).resolve() if source_path else target_path
+        target_str = str(target).strip()
+        is_git_target = target_str.startswith(("https://github.com", "http://github.com", "git@", "https://gitlab.com")) or target_str.endswith(".git")
+        temp_git_dir = None
+
+        if is_git_target:
+            import tempfile
+            import subprocess
+            temp_git_dir = tempfile.mkdtemp(prefix="auditforge_repo_")
+            try:
+                subprocess.run(
+                    ["git", "clone", "--depth", "1", target_str, temp_git_dir],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=45,
+                    check=True,
+                )
+                target_path = Path(temp_git_dir)
+                src_dir = target_path
+                server_name = target_str.rstrip("/").split("/")[-1].replace(".git", "")
+            except Exception as e:
+                target_path = Path(temp_git_dir)
+                src_dir = target_path
+                server_name = target_str
+        else:
+            target_path = Path(target).resolve() if target else Path(".")
+            src_dir = Path(source_path).resolve() if source_path else target_path
+            server_name = target_path.name
 
         # ── 1. Catalog Discovery / Loading ────────────────────────
         snapshot: Optional[ServerSnapshot] = None
@@ -77,13 +103,19 @@ class ScanOrchestrator:
             cat_file = Path(catalog_path)
         elif (target_path / "catalog.json").exists():
             cat_file = target_path / "catalog.json"
+        elif (target_path / "mcp.json").exists():
+            cat_file = target_path / "mcp.json"
         elif target_path.is_file() and target_path.suffix == ".json":
             cat_file = target_path
+        else:
+            cand_cats = list(target_path.glob("**/catalog.json"))
+            if cand_cats:
+                cat_file = cand_cats[0]
 
         if cat_file:
-            snapshot = MCPCatalogClient.load_from_file(str(cat_file), server_id=target_path.name)
+            snapshot = MCPCatalogClient.load_from_file(str(cat_file), server_id=server_name)
         else:
-            snapshot = ServerSnapshot(server_id=target_path.name, tools={})
+            snapshot = ServerSnapshot(server_id=server_name, tools={})
 
         # ── 2. Static AST & Secret Analysis ───────────────────────
         if src_dir.exists():
@@ -101,16 +133,16 @@ class ScanOrchestrator:
 
         # ── 4. Dynamic Sandbox Probing ────────────────────────────
         executors: Dict[str, Any] = {}
-        target = Path(target_path)
+        target_dir = Path(target_path)
         server_py = None
-        if target.is_file() and target.suffix == ".py":
-            server_py = target
-        elif target.is_dir():
-            cand = target / "server.py"
+        if target_dir.is_file() and target_dir.suffix == ".py":
+            server_py = target_dir
+        elif target_dir.is_dir():
+            cand = target_dir / "server.py"
             if cand.exists():
                 server_py = cand
             else:
-                py_files = list(target.glob("*.py"))
+                py_files = list(target_dir.glob("*.py"))
                 if py_files:
                     server_py = py_files[0]
 
@@ -187,12 +219,39 @@ class ScanOrchestrator:
             f"{len(all_findings)} finding(s) backed by {len(all_evidence)} evidence capsule(s)."
         )
 
+        # Stage Coverage calculation per PS02 API Contract
+        cat_status = "PASS" if (snapshot and snapshot.tools) else "ERROR"
+        ast_status = "FAIL" if any(f.rule_id.startswith("SAST") or f.rule_id.startswith("ANN") for f in all_findings) else ("PASS" if self.static_analyzer else "SKIPPED")
+        desc_status = "FAIL" if any(f.rule_id.startswith("DESC") for f in all_findings) else "PASS"
+        if all_probe_outcomes:
+            probe_status = "FAIL" if any(po.status.value != "OK" for po in all_probe_outcomes) else "PASS"
+        else:
+            probe_status = "SKIPPED"
+        if baseline:
+            pin_status = "FAIL" if (diff and not diff.is_identical) else "PASS"
+        else:
+            pin_status = "NOT_PINNED"
+
+        stage_coverage = {
+            "catalog_discovery": cat_status,
+            "static_ast": ast_status,
+            "description_intelligence": desc_status,
+            "dynamic_probing": probe_status,
+            "baseline_pinning": pin_status,
+        }
+
+        scan_mode = "LIVE_SCAN" if (server_command or self.use_docker or all_probe_outcomes) else "SNAPSHOT_ANALYSIS"
+
         scan_result = ScanResult(
             scan_id=scan_id,
-            target=str(target_path),
+            id=scan_id,
+            server_name=snapshot.server_id if snapshot else Path(str(target)).name,
+            target=str(target),
             started_at=started_at,
             completed_at=completed_at,
             trust_state=trust_state,
+            scan_mode=scan_mode,
+            stage_coverage=stage_coverage,
             snapshot=snapshot,
             diff=diff,
             findings=all_findings,
