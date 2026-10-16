@@ -5,6 +5,7 @@ import sqlite3
 from pathlib import Path
 from typing import List, Optional
 from auditforge.core.contracts import (
+    canonical_json,
     Finding,
     EvidenceRecord,
     ScanResult,
@@ -83,18 +84,18 @@ class Database:
             conn.commit()
 
     def save_baseline(self, snapshot: ServerSnapshot) -> None:
-        """Save or update an approved server catalog baseline."""
+        """Insert an explicitly approved baseline; preserve any existing approval."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                INSERT OR REPLACE INTO baselines (server_id, catalog_fingerprint, snapshot_json, created_at)
+                INSERT OR IGNORE INTO baselines (server_id, catalog_fingerprint, snapshot_json, created_at)
                 VALUES (?, ?, ?, ?)
                 """,
                 (
                     snapshot.server_id,
                     snapshot.catalog_fingerprint,
-                    snapshot.model_dump_json(),
+                    canonical_json(snapshot.model_dump(mode="json")),
                     snapshot.timestamp,
                 ),
             )

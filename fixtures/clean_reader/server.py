@@ -23,3 +23,15 @@ def word_count(text: str) -> Dict[str, int]:
     """Count words in text in-memory."""
     words = text.split()
     return {"count": len(words)}
+
+
+if __name__ == "__main__":
+    from mcp.server.mcpserver import MCPServer
+    from mcp.types import ToolAnnotations
+
+    server = MCPServer("clean_reader")
+    annotations = ToolAnnotations(read_only_hint=True, destructive_hint=False,
+                                  idempotent_hint=True, open_world_hint=False)
+    server.tool(annotations=annotations)(search_docs)
+    server.tool(annotations=annotations)(word_count)
+    server.run(transport="stdio")

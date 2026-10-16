@@ -39,10 +39,10 @@ def normalize_tool_definition(raw_tool: Any) -> ToolRecord:
     description = data.get("description") or ""
     
     # Handle both camelCase and snake_case from MCP SDK / raw JSON
-    raw_input_schema = data.get("input_schema") or data.get("inputSchema") or {}
+    raw_input_schema = data.get("input_schema", data.get("inputSchema", {}))
     input_schema = normalize_input_schema(raw_input_schema)
     
-    output_schema = data.get("output_schema") or data.get("outputSchema")
+    output_schema = data.get("output_schema", data.get("outputSchema"))
     if output_schema is not None and not isinstance(output_schema, dict):
         output_schema = None
         
