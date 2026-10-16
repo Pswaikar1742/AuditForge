@@ -199,6 +199,8 @@ class ScanResult(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     scan_id: str = Field(..., description="Unique scan run identifier")
+    id: Optional[str] = Field(default=None, description="Alias for scan_id for API and UI compatibility")
+    server_name: Optional[str] = Field(default=None, description="Display name of target server")
     target: str = Field(..., description="Server command, file path, or catalog URI audited")
     started_at: str = Field(default_factory=current_iso_timestamp, description="Scan start time")
     completed_at: Optional[str] = Field(default=None, description="Scan completion time")
@@ -211,3 +213,10 @@ class ScanResult(BaseModel):
     stage_coverage: Dict[str, str] = Field(default_factory=dict, description="Stage outcomes: PASS, ERROR, SKIPPED, UNKNOWN")
     scan_mode: str = Field(default="LIVE_SCAN", description="Audit modality: LIVE_SCAN or SNAPSHOT_ANALYSIS")
     summary: str = Field(default="", description="High-level audit executive summary")
+
+    def model_post_init(self, __context: Any) -> None:
+        if not self.id and self.scan_id:
+            self.id = self.scan_id
+        if not self.server_name and self.target:
+            from pathlib import Path
+            self.server_name = Path(str(self.target)).name
