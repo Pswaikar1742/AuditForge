@@ -2,11 +2,52 @@
 
 import json
 import os
+from pathlib import Path
 import shutil
 import subprocess
 import sys
-import urllib.request
+import click
 import typer
+import typer.core
+
+# Workaround for Click >=8.2 with Typer make_metavar and flag_value mismatch
+typer.core.rich = None
+
+_orig_opt_init = typer.core.TyperOption.__init__
+def _safe_opt_init(self, *args, **kwargs):
+    if kwargs.get("flag_value") is None and "flag_value" in kwargs:
+        unset = getattr(click.core, "UNSET", None)
+        if unset is not None:
+            kwargs["flag_value"] = unset
+        else:
+            del kwargs["flag_value"]
+    _orig_opt_init(self, *args, **kwargs)
+typer.core.TyperOption.__init__ = _safe_opt_init
+
+def _make_metavar(self, ctx=None):
+    if self.metavar is not None:
+        return self.metavar
+    if ctx is not None:
+        try:
+            v = self.type.get_metavar(param=self, ctx=ctx)
+            if v:
+                return v
+        except Exception:
+            pass
+    return self.name.upper() if self.name else ""
+
+typer.core.TyperArgument.make_metavar = _make_metavar
+typer.core.TyperOption.make_metavar = _make_metavar
+
+if sys.platform == "win32":
+    try:
+        if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8")
+        if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
@@ -149,15 +190,50 @@ def diff(
 @app.command()
 def scan(
     target: str = typer.Argument(..., help="Target MCP server path or command"),
+    reports: bool = typer.Option(True, "--reports", help="Generate and save Markdown & JSON reports"),
 ):
     """Execute security audit scan on target."""
     from auditforge.orchestrator import ScanOrchestrator
     orchestrator = ScanOrchestrator()
     try:
-        orchestrator.run_scan(target)
-    except NotImplementedError as e:
-        console.print(f"[bold red]Not Implemented:[/bold red] {e}")
-        raise typer.Exit(code=2)
+        console.print(Panel.fit(f"[bold cyan]AuditForge Security Auditor[/bold cyan]\nTarget: [yellow]{target}[/yellow]"))
+        result = orchestrator.run_scan(target)
+
+        table = Table(title=f"Scan Findings ({len(result.findings)} detected)")
+        table.add_column("Severity", justify="center")
+        table.add_column("Rule ID", style="cyan")
+        table.add_column("Tool", style="dim")
+        table.add_column("Reason")
+
+        sev_styles = {
+            Severity.CRITICAL: "[bold red]CRITICAL[/bold red]",
+            Severity.HIGH: "[bold yellow]HIGH[/bold yellow]",
+            Severity.MEDIUM: "[yellow]MEDIUM[/yellow]",
+            Severity.LOW: "[blue]LOW[/blue]",
+            Severity.INFO: "[dim]INFO[/dim]",
+        }
+
+        for f in result.findings:
+            table.add_row(
+                sev_styles.get(f.severity, f.severity.value),
+                f.rule_id,
+                f.tool_name or "server",
+                f.reason,
+            )
+
+        console.print(table)
+        console.print(f"\n[bold]Trust State:[/bold] [bold magenta]{result.trust_state.value}[/bold magenta]")
+
+        if reports:
+            rep_dir = Path("reports")
+            rep_dir.mkdir(parents=True, exist_ok=True)
+            target_slug = Path(target).name or "server"
+            md_path = rep_dir / f"audit_report_{target_slug}.md"
+            json_path = rep_dir / f"audit_report_{target_slug}.json"
+            generate_markdown_report(result, str(md_path))
+            export_json_report(result, str(json_path))
+            console.print(f"[dim]Reports generated at: {md_path} and {json_path}[/dim]")
+
     except Exception as e:
         console.print(f"[bold red]Scan Error:[/bold red] {e}")
         raise typer.Exit(code=1)

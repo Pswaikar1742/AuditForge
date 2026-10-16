@@ -3,7 +3,7 @@
 import json
 import sqlite3
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from auditforge.core.contracts import (
     Finding,
     EvidenceRecord,
@@ -17,9 +17,14 @@ class Database:
 
     def __init__(self, db_path: str = "auditforge.db"):
         self.db_path = db_path
+        self._mem_conn = sqlite3.connect(":memory:") if db_path == ":memory:" else None
+        if self._mem_conn:
+            self._mem_conn.row_factory = sqlite3.Row
         self._init_db()
 
     def _get_connection(self) -> sqlite3.Connection:
+        if self._mem_conn:
+            return self._mem_conn
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         return conn
@@ -181,3 +186,52 @@ class Database:
             if row:
                 return ScanResult.model_validate_json(row["result_json"])
             return None
+
+    def save_scan(self, result: ScanResult) -> None:
+        """Alias for save_scan_result."""
+        self.save_scan_result(result)
+
+    def list_scans(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """List recent scans."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT scan_id as id, target as server_name, started_at, trust_state, summary, result_json FROM scans ORDER BY started_at DESC LIMIT ?",
+                (limit,),
+            )
+            rows = cursor.fetchall()
+            results = []
+            for r in rows:
+                item = dict(r)
+                try:
+                    res_obj = json.loads(item.get("result_json", "{}"))
+                    item["findings"] = res_obj.get("findings", [])
+                    item["catalog_hash"] = res_obj.get("snapshot", {}).get("catalog_fingerprint")
+                    item["status"] = "COMPLETED" if res_obj.get("completed_at") else "PENDING"
+                except Exception:
+                    item["findings"] = []
+                results.append(item)
+            return results
+
+    def list_baselines(self) -> List[Dict[str, Any]]:
+        """List all pinned baselines."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT server_id as server_name, catalog_fingerprint as catalog_hash, 'APPROVED' as trust_state, 'admin' as approved_by, created_at as approved_at, snapshot_json FROM baselines ORDER BY created_at DESC"
+            )
+            return [dict(r) for r in cursor.fetchall()]
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Aggregate security statistics."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            scan_cnt = cursor.execute("SELECT COUNT(*) FROM scans").fetchone()[0]
+            base_cnt = cursor.execute("SELECT COUNT(*) FROM baselines").fetchone()[0]
+            findings_rows = cursor.execute("SELECT severity, COUNT(*) FROM findings GROUP BY severity").fetchall()
+            sev_map = {row[0]: row[1] for row in findings_rows}
+            return {
+                "total_scans": scan_cnt,
+                "total_baselines": base_cnt,
+                "findings_by_severity": sev_map,
+            }

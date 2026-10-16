@@ -50,6 +50,7 @@ coverage.xml
 audit_forge.db
 auditforge.db
 scan_reports/
+reports/
 evidence_capsules/
 
 # Environment and Secrets

@@ -144,10 +144,15 @@ export default function App() {
   const renderTrustBadge = (state) => {
     switch (state) {
       case 'APPROVED':
-        return <span className="badge badge-approved"><CheckCircle size={13} /> APPROVED</span>;
+      case 'VERIFIED':
+        return <span className="badge badge-approved"><CheckCircle size={13} /> VERIFIED</span>;
       case 'REVOKED':
-        return <span className="badge badge-revoked"><AlertTriangle size={13} /> REVOKED</span>;
+      case 'ROGUE':
+        return <span className="badge badge-revoked"><AlertTriangle size={13} /> ROGUE</span>;
+      case 'TRUST_GAP':
+        return <span className="badge badge-review" style={{ background: 'rgba(239, 68, 68, 0.2)', color: '#F87171', border: '1px solid rgba(239, 68, 68, 0.4)' }}><AlertTriangle size={13} /> TRUST GAP</span>;
       case 'REVIEW':
+      case 'SUSPICIOUS':
       default:
         return <span className="badge badge-review"><ClockIcon size={13} /> IN REVIEW</span>;
     }
