@@ -153,11 +153,17 @@ class ScanOrchestrator:
         if snapshot:
             try:
                 desc_analyzer = DescriptionAnalyzer(use_llm=self.use_llm)
+                had_llm_failure = False
                 for tool_name, tool in snapshot.tools.items():
                     d_findings, d_evidence = desc_analyzer.analyze_tool(tool)
                     all_findings.extend(d_findings)
                     all_evidence.extend(d_evidence)
-                stage_coverage["description_intelligence"] = "PASS"
+                    if any("skipped or timed out" in ev.summary.lower() for ev in d_evidence):
+                        had_llm_failure = True
+                if had_llm_failure:
+                    stage_coverage["description_intelligence"] = "ERROR"
+                else:
+                    stage_coverage["description_intelligence"] = "PASS"
             except Exception:
                 stage_coverage["description_intelligence"] = "ERROR"
         else:
@@ -196,9 +202,11 @@ class ScanOrchestrator:
                                     reason=f"Runtime isolation alert: Tool invoked unauthorized {ev_name} within sandbox.",
                                     confidence=1.0,
                                     remediation="Remove external subprocess or network invocations from tool handler.",
-                                )
+                                    )
                                 all_findings.append(fnd)
-                if any(p.status.value == "SKIPPED" for p in probe_outcomes):
+                if any(p.status.value in {"ERROR", "FAILED"} for p in probe_outcomes):
+                    stage_coverage["dynamic_probing"] = "ERROR"
+                elif any(p.status.value == "SKIPPED" for p in probe_outcomes):
                     stage_coverage["dynamic_probing"] = "SKIPPED"
                 else:
                     stage_coverage["dynamic_probing"] = "PASS"
@@ -224,7 +232,11 @@ class ScanOrchestrator:
             baseline = self.db.get_baseline(sid)
             if baseline:
                 diff = diff_catalogs(baseline, snapshot)
-        stage_coverage["baseline_pinning"] = "PASS"
+                stage_coverage["baseline_pinning"] = "PASS"
+            else:
+                stage_coverage["baseline_pinning"] = "NOT_PINNED"
+        else:
+            stage_coverage["baseline_pinning"] = "SKIPPED"
 
         # 6. Trust Gap Reconciliation
         trust_analyzer = TrustGapAnalyzer()
