@@ -149,3 +149,38 @@ Expected versus actual: all explicit injections and large embedded injections ma
 Files inspected: root AGENTS.md, pyproject.toml, src/auditforge/analyzers/description.py, src/auditforge/core/contracts.py, src/auditforge/config.py, and relevant test discovery. Files created: benchmarks/attacklab/{__init__,__main__,corpus,runner,report}.py, tests/unit/test_attacklab.py, docs/ATTACKLAB.md.
 
 Review destination: draft PR against **main**, per the explicit AttackLab workstream instruction overriding the older general develop-only handoff rule. No merge performed. No production files changed. Single-run timings are workstation measurements, not controlled comparative performance claims.
+
+## Phase 2 evaluation protocol
+
+Results schema v2 adds `diversity`, `techniques`, `input_sizes`, `rates`, and `uncertainty`.
+Existing repeated generation is unchanged (`--workload repeated`, still default).
+`--workload diverse` combines operation, object, scope, instruction wording, encoding/wrapper,
+size and seeded choices across nine techniques. Record identifiers ensure content uniqueness;
+100K unique bytes does **not** mean 100K independent attack concepts. Every tenth record is
+intentionally oversized. `--workload maximum` pads every canonical record to the configured
+maximum (at least 1024 bytes), without oversized cases. `--workload heldout` evaluates the
+fixed 18-case heldout-v1 set once, irrespective of `--cases`; it is not repeated to inflate counts.
+
+Heldout labels and explicit intent rationales were author-reviewed before execution. There is
+no independent human review claim. No detector rules or thresholds are tuned in this workstream.
+The fixed set and all results are now public; future detector tuning must use a fresh held-out set.
+
+Exact unique payload and successfully evaluated unique payload counts use SHA-256 membership
+in a temporary SQLite file, fixed 2 MiB page cache, and bounded categories/techniques/size bands.
+Temporary disk grows with distinct payload count; RAM does not store an unbounded hash set.
+Duplicate ratio uses hashable submissions; unserializable records remain errors outside that
+ratio. Disk I/O is included in processing time, final index aggregation/export is excluded.
+Cache remains a separate bounded LRU; unique evaluated counts do not count repeat calls after eviction.
+
+Rates exclude errors/skips from accuracy denominators. Technique breakdown distinguishes quoted
+documentation false positives and Unicode/whitespace/formatting false negatives. Size strata use
+whole canonical input bytes. Confidence intervals are explicitly unavailable: all workloads are
+finite designed censuses with dependent templates, not probability samples of real-world inputs.
+Adding binomial intervals would produce unjustified certainty. F1 uncertainty is likewise unclaimed.
+
+The opt-in matrix runs 1K/10K/100K, cache off/on, for repeated/diverse/maximum in separate sequential
+processes. The maximum workload uses **8192 bytes as its configured bound**, not the absolute 16 MiB
+supported ceiling. Diverse uses the same 8192-byte inspection bound with requested sizes 256/1024/8192;
+10% intentionally exceed it. Repeated retains its original sizes and 131072-byte limit. Results are
+workload-specific; different size mixes prevent attributing every performance difference to diversity.
+No benchmark invokes a target process, Docker, network, semantic model, or RAG.

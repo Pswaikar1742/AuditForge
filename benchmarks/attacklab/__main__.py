@@ -9,6 +9,7 @@ from .report import export
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Offline synthetic MCP description benchmark")
+    parser.add_argument("--workload", choices=("repeated", "diverse", "maximum", "heldout"), default="repeated")
     parser.add_argument("--cases", type=int, default=1000)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--batch-size", type=int, default=1000)
@@ -21,7 +22,7 @@ def main(argv=None):
     parser.add_argument("--strict", action="store_true", help="Exit 1 when any input is errored/skipped")
     args = parser.parse_args(argv)
     try:
-        config = Config(cases=args.cases, seed=args.seed, batch_size=args.batch_size,
+        config = Config(workload=args.workload, cases=args.cases, seed=args.seed, batch_size=args.batch_size,
                         max_input_bytes=args.max_input_bytes, deduplicate=args.deduplicate,
                         cache_entries=args.cache_entries, sizes=tuple(map(int, args.payload_sizes.split(','))),
                         sample_limit=args.samples)

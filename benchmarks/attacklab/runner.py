@@ -14,10 +14,13 @@ from typing import Iterable
 
 from auditforge.analyzers.description import DescriptionAnalyzer
 from auditforge.core.contracts import ToolRecord
-from .corpus import Case, encode, generate
+from .corpus import Case, encode
+from .workloads import workload, TECHNIQUES
+from .quality import UniqueCounts, size_band, uncertainty
 
 @dataclass(frozen=True)
 class Config:
+    workload: str = "repeated"
     cases: int = 1000
     seed: int = 42
     batch_size: int = 1000
@@ -28,6 +31,10 @@ class Config:
     sample_limit: int = 100
 
     def __post_init__(self):
+        if self.workload not in ("repeated", "diverse", "maximum", "heldout"):
+            raise ValueError("unknown workload")
+        if self.workload == "maximum" and self.max_input_bytes < 1024:
+            raise ValueError("maximum workload needs max-input-bytes >= 1024")
         if not 0 <= self.cases or not 1 <= self.batch_size <= 10000:
             raise ValueError("cases >= 0 and batch size 1..10000 required")
         if not 128 <= self.max_input_bytes <= 16 * 1024 * 1024:
@@ -85,13 +92,22 @@ def environment():
 
 
 def run(config: Config, records: Iterable[Case] | None = None, progress=None, sample=None):
+    unique = UniqueCounts()
+    try:
+        return _run(config, records, progress, sample, unique)
+    finally:
+        unique.close()
+
+
+def _run(config, records, progress, sample, unique):
     env = environment()
     analyzer = DescriptionAnalyzer(use_llm=False)
     cache = OrderedDict()
     totals, categories = Counter(), {}
+    techniques, sizes = {}, {}
     processing, detector = Latency(), Latency()
     started = time.perf_counter()
-    iterator = iter(records if records is not None else generate(config.cases, config.seed, config.sizes))
+    iterator = iter(records if records is not None else workload(config))
     # Only bounded iterator slices: never materialize batch_size * payload_size bytes.
     while True:
         batch_count = 0
@@ -101,12 +117,22 @@ def run(config: Config, records: Iterable[Case] | None = None, progress=None, sa
             totals["submitted"] += 1
             category = case.category if isinstance(case, Case) and case.category in {"benign", "explicit", "contextual", "formatting", "invalid", "large"} else "invalid"
             counts = categories.setdefault(category, Counter())
+            technique = case.expected_technique if isinstance(case, Case) else None
+            if technique not in (*TECHNIQUES, "instruction_override", "delimiter", "embedded_override"):
+                technique = "quoted_documentation" if category == "contextual" and isinstance(case, Case) and 'quotes' in str(case.synthetic_input) else "unspecified"
+            tc = techniques.setdefault(technique, Counter())
+            sc = sizes.setdefault(size_band(case.size_bytes if isinstance(case, Case) else 0), Counter())
+            tc["submitted"] += 1
+            sc["submitted"] += 1
+            key, bucket = None, None
             counts["submitted"] += 1
             status, reason, findings, evidence = "processed", None, [], []
             try:
                 if not isinstance(case, Case) or case.ground_truth is not True and case.ground_truth is not False and case.ground_truth is not None:
                     raise ValueError("invalid case or ground-truth label")
                 raw = encode(case.synthetic_input)
+                key = hashlib.sha256(raw).digest()
+                unique.add(key)
                 if len(raw) != case.size_bytes:
                     raise ValueError("size_bytes mismatch")
                 if len(raw) > config.max_input_bytes:
@@ -143,10 +169,15 @@ def run(config: Config, records: Iterable[Case] | None = None, progress=None, sa
                         bucket = ("tp" if findings else "fn") if case.ground_truth else ("fp" if findings else "tn")
                         counts[bucket] += 1
                         totals[bucket] += 1
+                        tc[bucket] += 1
+                        sc[bucket] += 1
+                        unique.add(key, evaluated=True)
             except Exception as exc:
                 status, reason = "errors", f"{type(exc).__name__}: {exc}"
             totals[status] += 1
             counts[status] += 1
+            tc[status] += 1
+            sc[status] += 1
             processing.add(time.perf_counter() - tick)
             if sample and totals["samples"] < config.sample_limit and (status != "processed" or findings or bucket == "fn"):
                 sample({"case": asdict(case) if isinstance(case, Case) else repr(case), "status": status,
@@ -159,7 +190,13 @@ def run(config: Config, records: Iterable[Case] | None = None, progress=None, sa
             break
     elapsed = time.perf_counter() - started
     rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    return {"schema_version": "attacklab.results.v1", "configuration": asdict(config), "environment": env,
+    cardinality = unique.report(totals["submitted"])
+    breakdown = lambda groups: {k: {**{s: v[s] for s in ("submitted", "processed", "errors", "skipped")}, **accuracy(v)} for k, v in groups.items()}
+    return {"schema_version": "attacklab.results.v2",
+            "diversity": cardinality, "uncertainty": uncertainty(),
+            "techniques": breakdown(techniques), "input_sizes": breakdown(sizes),
+            "rates": {"error_rate": totals["errors"] / totals["submitted"] if totals["submitted"] else None,
+                      "unassessed_rate": (totals["errors"] + totals["skipped"]) / totals["submitted"] if totals["submitted"] else None}, "configuration": asdict(config), "environment": env,
             "totals": {k: totals[k] for k in ("submitted", "processed", "errors", "skipped", "samples")},
             "accuracy": accuracy(totals),
             "categories": {k: {**{s: v[s] for s in ("submitted", "processed", "errors", "skipped")}, **accuracy(v)} for k, v in categories.items()},

@@ -127,3 +127,70 @@ print(r['performance']['peak_rss_bytes'])
     child = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True, timeout=25, env=os.environ.copy())
     assert child.returncode == 0, child.stderr
     assert int(child.stdout.strip()) < 256 * 1024 * 1024
+
+
+def test_diverse_reproducibility_and_parameters():
+    from benchmarks.attacklab.workloads import workload
+    a = list(workload(Config(workload='diverse', cases=100, sizes=(1024,))))
+    assert a == list(workload(Config(workload='diverse', cases=100, sizes=(1024,))))
+    assert a != list(workload(Config(workload='diverse', cases=100, seed=43, sizes=(1024,))))
+    assert len({encode(c.synthetic_input) for c in a}) == 100
+    assert len({c.expected_technique for c in a}) == 9
+    assert sum(c.size_bytes > 131072 for c in a) == 10
+    assert all(c.size_bytes == len(encode(c.synthetic_input)) for c in a)
+
+
+def test_exact_unique_evaluated_counts_and_strata():
+    rows = list(generate(23))
+    r = run(Config(), [rows[0], rows[0], rows[6], rows[19]])
+    assert r['diversity']['unique_payloads'] == 3
+    assert r['diversity']['unique_evaluated_payloads'] == 2
+    assert r['diversity']['duplicate_ratio'] == .25
+    assert r['rates']['error_rate'] == .25
+    for field in ('techniques', 'input_sizes'):
+        assert sum(x['submitted'] for x in r[field].values()) == 4
+        assert sum(x['tp'] for x in r[field].values()) == 1
+    assert r['uncertainty']['confidence_intervals'] is None
+
+
+def test_maximum_exact_bounds_and_heldout():
+    from benchmarks.attacklab.workloads import workload
+    from benchmarks.attacklab.heldout import REVIEWED
+    config = Config(workload='maximum', cases=27, max_input_bytes=8192)
+    assert all(c.size_bytes == 8192 for c in workload(config))
+    assert run(config)['totals']['skipped'] == 0
+    result = run(Config(workload='heldout'))
+    assert result['totals']['submitted'] == len(REVIEWED) == 18
+    assert result['diversity']['unique_payloads'] == 18
+    assert all(rationale for _, _, _, rationale in REVIEWED)
+    assert result['totals']['errors'] == 0
+
+
+def test_unique_disk_cleanup_and_bounds():
+    from benchmarks.attacklab.quality import UniqueCounts
+    unique = UniqueCounts()
+    directory = unique.path.parent
+    try:
+        for i in range(1000):
+            unique.add(i.to_bytes(32))
+        assert unique.db.execute('PRAGMA cache_size').fetchone()[0] == -2048
+        assert unique.report(1000)['unique_payloads'] == 1000
+    finally:
+        unique.close()
+    assert not directory.exists()
+
+
+def test_diverse_bounded_execution():
+    script = '''import resource
+resource.setrlimit(resource.RLIMIT_AS, (512*1024*1024, 512*1024*1024))
+resource.setrlimit(resource.RLIMIT_CPU, (15,15))
+from benchmarks.attacklab.runner import Config,run
+r=run(Config(workload='diverse',cases=1000,max_input_bytes=8192,sizes=(1024,),deduplicate=True,cache_entries=32))
+assert r['diversity']['unique_payloads']==1000
+assert r['diversity']['unique_evaluated_payloads']==900
+assert r['deduplication']['resident_entries']<=32
+print(r['performance']['peak_rss_bytes'])
+'''
+    child = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True, timeout=25)
+    assert child.returncode == 0, child.stderr
+    assert int(child.stdout.strip()) < 256 * 1024 * 1024
