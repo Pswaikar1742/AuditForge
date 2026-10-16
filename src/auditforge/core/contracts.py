@@ -42,6 +42,14 @@ class ProbeStatus(str, Enum):
     UNKNOWN = "UNKNOWN"
 
 
+class DriftCategory(str, Enum):
+    """Catalog drift severity categories distinguishing benign changes from rug pulls."""
+    UNCHANGED = "UNCHANGED"
+    CHANGED_REVIEW = "CHANGED_REVIEW"
+    HIGH_RISK_DRIFT = "HIGH_RISK_DRIFT"
+    UNVERIFIABLE = "UNVERIFIABLE"
+
+
 def canonical_json(obj: Any) -> str:
     """Serialize object to deterministic canonical JSON representation.
     
@@ -105,11 +113,19 @@ class ServerSnapshot(BaseModel):
     server_id: str = Field(..., description="Target server command or identifier")
     timestamp: str = Field(default_factory=current_iso_timestamp, description="Snapshot ISO 8601 timestamp")
     tools: Dict[str, ToolRecord] = Field(default_factory=dict, description="Mapping of tool names to ToolRecords")
+    resources: Dict[str, Any] = Field(default_factory=dict, description="Discovered MCP resources or discovery status")
+    prompts: Dict[str, Any] = Field(default_factory=dict, description="Discovered MCP prompts or discovery status")
+    capabilities: Dict[str, Any] = Field(default_factory=dict, description="Server capabilities and version metadata")
+    tools_fingerprint: str = Field(default="", description="Tools catalog SHA-256 hash")
+    resources_fingerprint: str = Field(default="", description="Resources catalog SHA-256 hash")
+    prompts_fingerprint: str = Field(default="", description="Prompts catalog SHA-256 hash")
     catalog_fingerprint: str = Field(default="", description="Combined catalog SHA-256 hash")
 
     def model_post_init(self, __context: Any) -> None:
+        if not self.tools_fingerprint and self.tools:
+            self.tools_fingerprint = compute_catalog_fingerprint(self.tools)
         if not self.catalog_fingerprint and self.tools:
-            self.catalog_fingerprint = compute_catalog_fingerprint(self.tools)
+            self.catalog_fingerprint = self.tools_fingerprint or compute_catalog_fingerprint(self.tools)
 
 
 class EvidenceRecord(BaseModel):
@@ -171,6 +187,8 @@ class CatalogDiff(BaseModel):
     baseline_fingerprint: str = Field(..., description="Previous approved catalog fingerprint")
     current_fingerprint: str = Field(..., description="Current catalog fingerprint")
     is_identical: bool = Field(..., description="Whether catalogs are byte-for-byte identical")
+    drift_category: DriftCategory = Field(default=DriftCategory.UNCHANGED, description="Catalog drift category: UNCHANGED, CHANGED_REVIEW, HIGH_RISK_DRIFT, UNVERIFIABLE")
+    drift_reasons: List[str] = Field(default_factory=list, description="Specific triggers causing the drift classification")
     added_tools: List[str] = Field(default_factory=list, description="Newly discovered tools")
     removed_tools: List[str] = Field(default_factory=list, description="Tools removed since baseline")
     modified_tools: Dict[str, Dict[str, Any]] = Field(default_factory=dict, description="Field-level modifications per tool")

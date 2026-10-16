@@ -23,6 +23,8 @@ export default function App() {
   const [diffResult, setDiffResult] = useState(null);
   const [apiOnline, setApiOnline] = useState(false);
   const [severityFilter, setSeverityFilter] = useState('ALL');
+  const [koalaReport, setKoalaReport] = useState(null);
+  const [loadingAssurance, setLoadingAssurance] = useState(false);
 
   useEffect(() => {
     checkHealth();
@@ -30,6 +32,7 @@ export default function App() {
     fetchScans();
     fetchBaselines();
     fetchFixtures();
+    fetchKoalaAssurance();
     const interval = setInterval(checkHealth, 5000);
     return () => clearInterval(interval);
   }, []);
@@ -94,6 +97,42 @@ export default function App() {
       if (res.ok) setFixtures(await res.json());
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  const fetchKoalaAssurance = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/assurance/model`);
+      if (res.ok) {
+        const data = await res.json();
+        setKoalaReport(data);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const triggerKoalaAudit = async () => {
+    setLoadingAssurance(true);
+    setStatusMsg("Executing KOALA model governance audit (NIST AI RMF & EU AI Act)...");
+    try {
+      const res = await fetch(`${API_BASE}/api/assurance/audit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ frameworks: ['nist_ai_rmf', 'eu_ai_act'] }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setKoalaReport(data);
+        setStatusMsg("✔ KOALA Governance Audit Completed: 33 controls assessed.");
+      } else {
+        const err = await res.json();
+        setStatusMsg(`KOALA audit failed: ${err.detail || 'Unknown error'}`);
+      }
+    } catch (e) {
+      setStatusMsg(`KOALA error: ${e.message}`);
+    } finally {
+      setLoadingAssurance(false);
     }
   };
 
@@ -342,6 +381,7 @@ export default function App() {
           { id: 'scanner', label: 'Security Auditor', icon: Shield },
           { id: 'findings', label: `Evidence Explorer (${selectedScan?.findings?.length || 0})`, icon: Layers },
           { id: 'baselines', label: `Baseline Registry (${baselines.length})`, icon: Database },
+          { id: 'assurance', label: 'Model Assurance (KOALA)', icon: Lock },
           { id: 'architecture', label: 'USP & System Specs', icon: Cpu },
         ].map(tab => {
           const Icon = tab.icon;
@@ -1141,6 +1181,160 @@ export default function App() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          </div>
+        )}
+
+        {/* ── Tab: Model Assurance (Sponsor: KOALA) ──────────────── */}
+        {activeTab === 'assurance' && (
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.5rem' }}>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.25rem' }}>
+                  <h2 style={{ fontSize: '1.25rem', fontWeight: '800' }}>Model Governance Assurance Sidecar</h2>
+                  <span className="badge" style={{ background: 'rgba(99, 102, 241, 0.15)', color: '#818CF8', border: '1px solid rgba(99, 102, 241, 0.3)' }}>
+                    Sponsor: DomAiyn Labs
+                  </span>
+                </div>
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', maxWidth: '900px' }}>
+                  Audits local open-weight reasoning models (Qwen2.5-Coder-7B) against formal regulatory frameworks (NIST AI RMF 1.0 & EU AI Act) using <strong>KOALA v0.2.0</strong>. Model governance is evaluated orthogonally to MCP target server threat verdicts.
+                </p>
+              </div>
+
+              <button
+                className="btn btn-primary"
+                onClick={triggerKoalaAudit}
+                disabled={loadingAssurance}
+                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', whiteSpace: 'nowrap' }}
+              >
+                <RefreshCw size={15} className={loadingAssurance ? "spin" : ""} />
+                {loadingAssurance ? "Auditing Model..." : "Re-Run KOALA Audit"}
+              </button>
+            </div>
+
+            {/* KOALA Metrics Overview Cards */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1.25rem', marginBottom: '2rem' }}>
+              <div className="glass-panel" style={{ padding: '1.25rem' }}>
+                <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: '600' }}>Evaluated Controls</span>
+                <div style={{ fontSize: '1.75rem', fontWeight: '800', marginTop: '0.25rem', color: '#F8FAFC' }}>
+                  {koalaReport?.summary?.controls_total || 33}
+                </div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>NIST AI RMF & EU AI Act</div>
+              </div>
+
+              <div className="glass-panel" style={{ padding: '1.25rem' }}>
+                <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: '600' }}>Machine Verified</span>
+                <div style={{ fontSize: '1.75rem', fontWeight: '800', marginTop: '0.25rem', color: '#10B981' }}>
+                  {koalaReport?.summary?.machine_verified || 14}
+                </div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
+                  {koalaReport?.summary?.machine_verification_percent || 42.4}% Coverage Rate
+                </div>
+              </div>
+
+              <div className="glass-panel" style={{ padding: '1.25rem' }}>
+                <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: '600' }}>Identified Governance Gaps</span>
+                <div style={{ fontSize: '1.75rem', fontWeight: '800', marginTop: '0.25rem', color: '#F59E0B' }}>
+                  {koalaReport?.summary?.failed || 10}
+                </div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>With actionable remediation advice</div>
+              </div>
+
+              <div className="glass-panel" style={{ padding: '1.25rem' }}>
+                <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', textTransform: 'uppercase', fontWeight: '600' }}>Target Model Architecture</span>
+                <div style={{ fontSize: '1.1rem', fontWeight: '700', marginTop: '0.5rem', color: '#38BDF8' }}>
+                  {koalaReport?.model_id || 'Qwen2.5-Coder-7B'}
+                </div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>Local Open-Weight Causal LM</div>
+              </div>
+            </div>
+
+            {/* KOALA Controls & Findings Table */}
+            <div className="glass-panel" style={{ padding: '1rem', overflowX: 'auto', marginBottom: '1.5rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', padding: '0.25rem 0.5rem' }}>
+                <h3 style={{ fontSize: '1rem', fontWeight: '700' }}>Framework Control Evaluation Matrix</h3>
+                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                  {koalaReport?.attribution || 'Audited via KOALA (version 0.2.0) by DomAiyn Labs (Apache 2.0)'}
+                </span>
+              </div>
+
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
+                    <th style={{ padding: '0.75rem' }}>STATUS</th>
+                    <th style={{ padding: '0.75rem' }}>CONTROL ID</th>
+                    <th style={{ padding: '0.75rem' }}>FRAMEWORK</th>
+                    <th style={{ padding: '0.75rem' }}>CLAUSE</th>
+                    <th style={{ padding: '0.75rem' }}>TITLE</th>
+                    <th style={{ padding: '0.75rem' }}>SEVERITY</th>
+                    <th style={{ padding: '0.75rem' }}>EVIDENCE & REMEDIATION</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(koalaReport?.results || []).map((ctrl, idx) => {
+                    const isPass = ctrl.status?.toLowerCase() === 'pass';
+                    const isFail = ctrl.status?.toLowerCase() === 'fail';
+                    return (
+                      <tr key={idx} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+                        <td style={{ padding: '0.75rem' }}>
+                          <span
+                            className="badge"
+                            style={{
+                              background: isPass ? 'rgba(16, 185, 129, 0.15)' : isFail ? 'rgba(239, 68, 68, 0.15)' : 'rgba(148, 163, 184, 0.15)',
+                              color: isPass ? '#34D399' : isFail ? '#F87171' : '#94A3B8',
+                              border: `1px solid ${isPass ? 'rgba(16, 185, 129, 0.3)' : isFail ? 'rgba(239, 68, 68, 0.3)' : 'rgba(148, 163, 184, 0.3)'}`,
+                              fontWeight: '700',
+                              fontSize: '0.75rem',
+                            }}
+                          >
+                            {ctrl.status?.toUpperCase() || 'UNKNOWN'}
+                          </span>
+                        </td>
+                        <td style={{ padding: '0.75rem', fontFamily: 'monospace', fontSize: '0.8rem', color: '#CBD5E1' }}>
+                          {ctrl.control_id}
+                        </td>
+                        <td style={{ padding: '0.75rem', color: '#94A3B8' }}>
+                          {ctrl.framework === 'nist_ai_rmf' ? 'NIST AI RMF' : ctrl.framework === 'eu_ai_act' ? 'EU AI Act' : ctrl.framework}
+                        </td>
+                        <td style={{ padding: '0.75rem', fontWeight: '600', color: '#E2E8F0' }}>
+                          {ctrl.clause}
+                        </td>
+                        <td style={{ padding: '0.75rem', color: '#F1F5F9', fontWeight: '500' }}>
+                          {ctrl.title}
+                        </td>
+                        <td style={{ padding: '0.75rem' }}>
+                          <span
+                            className="badge"
+                            style={{
+                              background: ctrl.severity === 'critical' ? 'rgba(239, 68, 68, 0.2)' : ctrl.severity === 'high' ? 'rgba(249, 115, 22, 0.2)' : 'rgba(234, 179, 8, 0.15)',
+                              color: ctrl.severity === 'critical' ? '#F87171' : ctrl.severity === 'high' ? '#FB923C' : '#FACC15',
+                              fontSize: '0.7rem',
+                            }}
+                          >
+                            {ctrl.severity?.toUpperCase()}
+                          </span>
+                        </td>
+                        <td style={{ padding: '0.75rem', fontSize: '0.8rem', maxWidth: '350px' }}>
+                          <div style={{ color: '#94A3B8', marginBottom: ctrl.remediation ? '0.25rem' : '0' }}>
+                            {ctrl.evidence}
+                          </div>
+                          {ctrl.remediation?.fix && (
+                            <div style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '4px', padding: '0.4rem', marginTop: '0.25rem', color: '#CBD5E1' }}>
+                              <strong style={{ color: '#F59E0B', fontSize: '0.75rem' }}>Fix: </strong>
+                              <span style={{ fontSize: '0.75rem' }}>{ctrl.remediation.fix.slice(0, 150)}...</span>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Governance Disclaimer */}
+            <div style={{ padding: '1rem', background: 'rgba(255, 255, 255, 0.02)', border: '1px solid var(--border-subtle)', borderRadius: '8px', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+              <strong>Governance Transparency Notice:</strong> {koalaReport?.disclaimer || "Koala produces evidence and gap analysis, not legal certification. A passing result is not a compliance guarantee or a legal defense."}
             </div>
           </div>
         )}

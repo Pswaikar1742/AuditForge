@@ -12,6 +12,7 @@ from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from auditforge.assurance.koala import KoalaAssuranceRunner, KoalaReport
 from auditforge.config import config
 from auditforge.core.contracts import CatalogDiff, ScanResult, ServerSnapshot
 from auditforge.catalog.client import MCPCatalogClient
@@ -551,3 +552,42 @@ def live_rug_pull_demo() -> Dict[str, Any]:
         "diff": diff_res.model_dump(),
         "explanation": "Live stdio discovery captured capability modification between server versions without static file shortcuts.",
     }
+
+
+# ── Sponsor KOALA Model Assurance Endpoints ───────────────────────
+class KoalaAuditRequest(BaseModel):
+    frameworks: Optional[List[str]] = None
+    target_runtime: Optional[str] = None
+
+
+@app.get("/api/assurance/model")
+def get_model_assurance() -> Dict[str, Any]:
+    """Retrieve model governance assurance report powered by KOALA (DomAiyn Labs)."""
+    runner = KoalaAssuranceRunner()
+    report_file = Path("/tmp/koala_report.json")
+    if report_file.exists():
+        try:
+            report = runner.load_report(str(report_file))
+            return report.model_dump()
+        except Exception:
+            pass
+    # If report not pre-generated, execute fresh audit
+    try:
+        report = runner.run_audit()
+        return report.model_dump()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to generate model assurance report: {exc}")
+
+
+@app.post("/api/assurance/audit")
+def trigger_model_assurance(req: KoalaAuditRequest) -> Dict[str, Any]:
+    """Execute on-demand KOALA model assurance audit for local AI models."""
+    runner = KoalaAssuranceRunner()
+    try:
+        report = runner.run_audit(
+            frameworks=req.frameworks,
+            target_runtime=req.target_runtime,
+        )
+        return report.model_dump()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"KOALA assurance audit execution failed: {exc}")
