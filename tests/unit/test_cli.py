@@ -31,3 +31,11 @@ def test_cli_doctor():
     assert "Dependency & Environment Status" in result.output
     assert "Python Runtime" in result.output
     assert "MCP Python SDK" in result.output
+
+
+def test_cli_scan():
+    """Verify scan command executes on clean_reader fixture."""
+    result = runner.invoke(app, ["scan", "fixtures/clean_reader", "--no-reports"])
+    assert result.exit_code == 0
+    assert "Trust State:" in result.output
+    assert "VERIFIED" in result.output

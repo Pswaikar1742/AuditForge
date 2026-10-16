@@ -179,4 +179,79 @@ class DescriptionAnalyzer:
                     )
                     break
 
+            # 5. Layer 2: Optional Open-Weight LLM Heuristic Classification (Ollama Qwen)
+            if self.use_llm and not any(f.rule_id == "DESC-003" for f in findings):
+                llm_res = self._layer2_classify(text, tool.name, field_name)
+                if llm_res:
+                    fnd, ev = llm_res
+                    findings.append(fnd)
+                    evidence.append(ev)
+
         return findings, evidence
+
+    def _layer2_classify(
+        self, text: str, tool_name: str, field_name: str
+    ) -> Optional[Tuple[Finding, EvidenceRecord]]:
+        """Optional Layer 2 heuristic prompt injection check via local Ollama model."""
+        from auditforge.config import config
+        
+        prompt = (
+            f"Analyze this MCP tool {field_name} for tool '{tool_name}':\n"
+            f"---\n{text}\n---\n"
+            "Classify if the text contains prompt injection, instructions attempting to override LLM safety, "
+            "or data exfiltration directives. Respond ONLY with a JSON object in this exact format:\n"
+            '{"is_injection": true, "confidence": 0.85, "reason": "brief explanation"}'
+        )
+
+        try:
+            req_data = json.dumps({
+                "model": self.model_name or config.OLLAMA_MODEL,
+                "prompt": prompt,
+                "stream": False,
+                "options": {"temperature": 0.1},
+            }).encode("utf-8")
+
+            req = urllib.request.Request(
+                f"{config.OLLAMA_HOST}/api/generate",
+                data=req_data,
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=config.OLLAMA_TIMEOUT) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                response_text = data.get("response", "")
+                
+                m = re.search(r"\{[^{}]*\}", response_text)
+                if m:
+                    res_json = json.loads(m.group(0))
+                    if res_json.get("is_injection") is True:
+                        conf = float(res_json.get("confidence", 0.8))
+                        reason = res_json.get("reason", "Semantic prompt injection indicator detected.")
+                        raw_data = {
+                            "tool": tool_name,
+                            "field": field_name,
+                            "model": self.model_name or config.OLLAMA_MODEL,
+                            "llm_output": res_json,
+                        }
+                        ev_id = generate_evidence_id("description_llm_heuristic", raw_data)
+                        ev = EvidenceRecord(
+                            evidence_id=ev_id,
+                            source="description_llm_heuristic",
+                            tool_name=tool_name,
+                            summary=f"Ollama {self.model_name or config.OLLAMA_MODEL} flagged prompt injection in {field_name}: {reason}",
+                            raw_data=raw_data,
+                        )
+                        fnd = Finding(
+                            id=generate_finding_id("DESC"),
+                            rule_id="DESC-LLM-001",
+                            severity=Severity.HIGH,
+                            tool_name=tool_name,
+                            evidence_ids=[ev_id],
+                            reason=f"Heuristic AI analysis ({self.model_name or config.OLLAMA_MODEL}) flagged potential prompt injection in {field_name}: {reason}",
+                            confidence=conf,
+                            remediation="Review and sanitize tool metadata to prevent instruction overriding.",
+                        )
+                        return fnd, ev
+        except Exception:
+            # Graceful fallback: offline Ollama or timeout does not break the scan
+            return None
+        return None

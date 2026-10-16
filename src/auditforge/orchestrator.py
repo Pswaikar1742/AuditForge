@@ -37,7 +37,7 @@ class ScanOrchestrator:
         self,
         db_path: Optional[str] = None,
         use_docker: bool = False,
-        use_llm: bool = True,
+        use_llm: bool = False,
     ):
         self.db = Database(db_path or config.DB_PATH)
         self.use_docker = use_docker
@@ -53,8 +53,12 @@ class ScanOrchestrator:
         server_command: Optional[List[str]] = None,
         source_path: Optional[str] = None,
         catalog_path: Optional[str] = None,
+        use_llm: Optional[bool] = None,
     ) -> ScanResult:
         """Execute full audit pipeline on target server."""
+        if use_llm is not None:
+            self.desc_analyzer.use_llm = use_llm
+
         scan_id = f"scan-{uuid.uuid4().hex[:12]}"
         started_at = current_iso_timestamp()
 

@@ -190,14 +190,15 @@ def diff(
 @app.command()
 def scan(
     target: str = typer.Argument(..., help="Target MCP server path or command"),
-    reports: bool = typer.Option(True, "--reports", help="Generate and save Markdown & JSON reports"),
+    reports: bool = typer.Option(True, "--reports/--no-reports", help="Generate and save Markdown & JSON reports"),
+    llm: bool = typer.Option(False, "--llm/--no-llm", help="Enable heuristic Open-Weight LLM (Ollama Qwen) semantic classification"),
 ):
     """Execute security audit scan on target."""
     from auditforge.orchestrator import ScanOrchestrator
-    orchestrator = ScanOrchestrator()
+    orchestrator = ScanOrchestrator(use_llm=llm)
     try:
         console.print(Panel.fit(f"[bold cyan]AuditForge Security Auditor[/bold cyan]\nTarget: [yellow]{target}[/yellow]"))
-        result = orchestrator.run_scan(target)
+        result = orchestrator.run_scan(target, use_llm=llm)
 
         table = Table(title=f"Scan Findings ({len(result.findings)} detected)")
         table.add_column("Severity", justify="center")

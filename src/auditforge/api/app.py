@@ -88,6 +88,7 @@ class HealthResponse(BaseModel):
 class ScanRequest(BaseModel):
     server_path: str
     server_name: Optional[str] = None
+    use_llm: bool = False
 
 
 def _format_scan_dict(res: ScanResult) -> Dict[str, Any]:
@@ -151,7 +152,7 @@ def get_scan(scan_id: str) -> Dict[str, Any]:
 def trigger_scan(req: ScanRequest) -> Dict[str, Any]:
     """Trigger a security audit scan on a target directory, file, or fixture."""
     try:
-        res = orchestrator.run_scan(target=req.server_path)
+        res = orchestrator.run_scan(target=req.server_path, use_llm=req.use_llm)
         return _format_scan_dict(res)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Audit scan failed: {str(e)}")
