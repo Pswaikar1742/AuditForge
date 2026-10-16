@@ -43,12 +43,23 @@ class DockerSandboxRunner:
         if self.server_path.parent == Path("/") or home == self.server_path.parent or home in self.server_path.parents:
             return ProbeOutcome(case_id=case.case_id, tool_name=case.tool_name, status=ProbeStatus.SKIPPED,
                                 error_message="Refusing to mount filesystem root or a host home directory")
-        command = ["docker", "run", "--rm", "--network", self.network_mode, "--memory", self.memory_limit,
-                   "--cpus", "0.5", "--pids-limit", "64", "--read-only", "--tmpfs",
-                   "/tmp:rw,noexec,nosuid,size=16m", "--user", "1000:1000",
-                   "-v", f"{self.server_path.parent}:/target:ro", self.image_name,
-                   "--guest", "--server-path", f"/target/{self.server_path.name}",
-                   "--case-json", case.model_dump_json()]
+        command = [
+            "docker", "run", "--rm",
+            "--network", self.network_mode,
+            "--memory", self.memory_limit,
+            "--cpus", "0.5",
+            "--pids-limit", "64",
+            "--read-only",
+            "--security-opt", "no-new-privileges:true",
+            "--cap-drop", "ALL",
+            "--tmpfs", "/tmp:rw,noexec,nosuid,size=16m",
+            "--user", "1000:1000",
+            "-v", f"{self.server_path.parent}:/target:ro",
+            self.image_name,
+            "--guest",
+            "--server-path", f"/target/{self.server_path.name}",
+            "--case-json", case.model_dump_json(),
+        ]
         budget = min(self.timeout_seconds, case.timeout_seconds)
         try:
             completed = subprocess.run(command, capture_output=True, text=True, timeout=budget, check=False)
@@ -71,6 +82,10 @@ class DockerSandboxRunner:
 
 
 def _guest(server_path: str, case_json: str) -> int:
+    """Execute target tool inside container via MCP protocol (tools/call) while capturing telemetry."""
+    import asyncio
+    from mcp.server.mcpserver import MCPServer
+
     case = ProbeCase.model_validate_json(case_json)
     telemetry = AuditHookTelemetry()
     telemetry.start_capture()
@@ -80,8 +95,36 @@ def _guest(server_path: str, case_json: str) -> int:
             raise RuntimeError("Could not load target module")
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        value = getattr(module, case.tool_name)(**case.input_arguments)
-        result = {"status": "OK", "return_value": value}
+
+        # Locate existing MCPServer instance in module or construct protocol wrapper
+        mcp_server = None
+        for attr_name in dir(module):
+            attr = getattr(module, attr_name)
+            if isinstance(attr, MCPServer):
+                mcp_server = attr
+                break
+
+        if mcp_server is None:
+            tool_fn = getattr(module, case.tool_name, None)
+            if tool_fn is None:
+                raise AttributeError(f"Module has no tool function '{case.tool_name}'")
+            mcp_server = MCPServer("guest_protocol_runner")
+            mcp_server.tool()(tool_fn)
+
+        async def _call():
+            return await mcp_server.call_tool(case.tool_name, case.input_arguments)
+
+        mcp_res = asyncio.run(_call())
+        is_err = getattr(mcp_res, "is_error", False)
+        content = getattr(mcp_res, "content", [])
+        text_content = [getattr(c, "text", str(c)) for c in content]
+        val = text_content[0] if len(text_content) == 1 else text_content
+        result = {
+            "status": "TOOL_ERROR" if is_err else "OK",
+            "return_value": val,
+            "error_message": val if is_err else None,
+            "protocol": "MCP/tools_call",
+        }
     except Exception as exc:
         result = {"status": "TOOL_ERROR", "error_message": f"{type(exc).__name__}: {exc}"}
     result["telemetry_events"] = telemetry.stop_capture()

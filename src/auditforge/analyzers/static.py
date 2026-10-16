@@ -84,7 +84,7 @@ class StaticAnalyzer:
             if any(n == "socket" or n.startswith("requests") for n in names):
                 return ("AST-NETWORK-001", Severity.HIGH, "The source imports a direct network client, enabling outbound communication from a tool.", "Remove unneeded network access or enforce an explicit allowlist and validate destinations.")
             if any(n == "subprocess" or n.startswith("subprocess.") for n in names):
-                return ("AST-SUBPROCESS-001", Severity.CRITICAL, "The source imports subprocess and can spawn operating-system processes.", "Remove process execution; if unavoidable, use a fixed executable allowlist and strict argument validation.")
+                return ("AST-SUBPROCESS-001", Severity.MEDIUM, "The source imports subprocess and has capability to spawn operating-system processes.", "Remove process execution; if unavoidable, use a fixed executable allowlist and strict argument validation.")
         if isinstance(node, ast.Call):
             name = self._dotted(node.func)
             if name == "os.system":

@@ -18,6 +18,10 @@ def live_client():
     try:
         subprocess.run(['docker', 'image', 'inspect', IMAGE], check=True, capture_output=True, timeout=10)
     except (OSError, subprocess.SubprocessError) as exc:
+        # In strict / judge validation, never silently skip mandatory Docker tests
+        import os
+        if os.environ.get("AUDITFORGE_STRICT_TESTS", "1") == "1":
+            pytest.fail(f"Judge Mode Failure: Required MCP test image '{IMAGE}' unavailable: {exc}")
         pytest.skip(f'SKIPPED: restricted MCP test image unavailable: {exc}')
     names = []
     def create(fixture, *args):

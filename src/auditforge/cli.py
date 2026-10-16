@@ -1,5 +1,6 @@
 """AuditForge CLI — Typer + Rich Interface."""
 
+import asyncio
 import json
 import os
 import shutil
@@ -226,54 +227,66 @@ def demo():
     """Execute complete 5-stage judge-ready demonstration."""
     console.print(Panel.fit("[bold cyan]AuditForge — Master 5-Stage Live Demonstration[/bold cyan]", border_style="cyan"))
 
-    orchestrator = ScanOrchestrator(use_docker=True, use_llm=True)
-    db = Database(config.DB_PATH)
-    with db._get_connection() as conn:
-        conn.execute("DELETE FROM baselines WHERE server_id = 'clean_reader'")
+    # Use an isolated demo database to strictly protect reviewer approvals in production DB
+    demo_db_path = "auditforge_demo.db"
+    if os.path.exists(demo_db_path):
+        os.remove(demo_db_path)
+    db = Database(demo_db_path)
+    orchestrator = ScanOrchestrator(db_path=demo_db_path, use_docker=True, use_llm=True)
 
     # Stage 1: Clean MCP baseline
     console.print("\n[bold green]═══ STAGE 1: Clean Baseline Server (Negative Control) ═══[/bold green]")
     res1 = orchestrator.run_scan("fixtures/clean_reader/")
-    console.print(f"Target: clean_reader | Tools: {len(res1.snapshot.tools)} | Verdict: [bold green]{res1.trust_state.value}[/bold green] | Findings: {len(res1.findings)}")
+    console.print(f"Target: clean_reader | Mode: {res1.scan_mode} | Tools: {len(res1.snapshot.tools)} | Verdict: [bold green]{res1.trust_state.value}[/bold green] | Findings: {len(res1.findings)}")
+    console.print(f"  Coverage: {json.dumps(res1.stage_coverage)}")
 
-    # Pin baseline for clean_reader
-    db = Database(config.DB_PATH)
+    # Pin baseline for clean_reader in demo DB
     db.save_baseline(res1.snapshot)
-    console.print(f"Baseline pinned with SHA-256: [yellow]{res1.snapshot.catalog_fingerprint}[/yellow]")
+    console.print(f"  Baseline pinned with SHA-256: [yellow]{res1.snapshot.catalog_fingerprint}[/yellow]")
 
     # Stage 2: Rogue Server Static & Dynamic Trap
     console.print("\n[bold red]═══ STAGE 2: Rogue Server Static Vulnerability & Sandbox Trap ═══[/bold red]")
     res2 = orchestrator.run_scan("fixtures/rogue_server/")
-    console.print(f"Target: rogue_server | Verdict: [bold red]{res2.trust_state.value}[/bold red] | Findings: {len(res2.findings)}")
+    console.print(f"Target: rogue_server | Mode: {res2.scan_mode} | Verdict: [bold red]{res2.trust_state.value}[/bold red] | Findings: {len(res2.findings)}")
     for f in res2.findings[:2]:
         console.print(f"  - [{f.severity.value}] {f.rule_id} on {f.tool_name}: {f.reason}")
 
     # Stage 3: Poisoned Description Detection
-    console.print("\n[bold yellow]═══ STAGE 3: Prompt Poisoning & Injection Detection ═══[/bold yellow]")
+    console.print("\n[bold yellow]═══ STAGE 3: Prompt Poisoning & Injection Detection (Open-Weight Model) ═══[/bold yellow]")
     res3 = orchestrator.run_scan("fixtures/poisoned_description/")
-    console.print(f"Target: poisoned_description | Verdict: [bold yellow]{res3.trust_state.value}[/bold yellow] | Findings: {len(res3.findings)}")
+    console.print(f"Target: poisoned_description | Mode: {res3.scan_mode} | Verdict: [bold yellow]{res3.trust_state.value}[/bold yellow] | Findings: {len(res3.findings)}")
     for f in res3.findings:
         console.print(f"  - [{f.severity.value}] {f.rule_id}: {f.reason}")
 
     # Stage 4: Lying Annotations (Trust Gap Reconciliation)
     console.print("\n[bold magenta]═══ STAGE 4: Lying Annotations Trust Gap Reconciliation ═══[/bold magenta]")
     res4 = orchestrator.run_scan("fixtures/lying_annotations/")
-    console.print(f"Target: lying_annotations | Claimed: readOnly=True | Verdict: [bold red]{res4.trust_state.value}[/bold red]")
+    console.print(f"Target: lying_annotations | Mode: {res4.scan_mode} | Claimed: readOnly=True | Verdict: [bold red]{res4.trust_state.value}[/bold red]")
     for f in res4.findings:
         console.print(f"  - [{f.severity.value}] {f.rule_id}: {f.reason}")
 
-    # Stage 5: Live Rug Pull Diff
-    console.print("\n[bold cyan]═══ STAGE 5: Approved Baseline Pinning & Live Rug Pull Diff ═══[/bold cyan]")
-    snap_v2 = MCPCatalogClient.load_from_file("fixtures/rug_pull/catalog_v2.json", server_id="clean_reader")
-    baseline = db.get_baseline("clean_reader")
+    # Stage 5: Live Rug Pull Diff (Genuine live stdio MCP queries)
+    console.print("\n[bold cyan]═══ STAGE 5: Approved Baseline Pinning & Live Protocol Rug Pull Diff ═══[/bold cyan]")
+    # Discover version 1 live over MCP stdio
+    client_v1 = MCPCatalogClient([sys.executable, "fixtures/rug_pull/server.py", "--version", "1"], server_id="live_rug_pull")
+    snap_v1 = asyncio.run(client_v1.discover_live())
+    db.save_baseline(snap_v1)
+    console.print(f"  Approved Baseline (v1) Hash: [yellow]{snap_v1.catalog_fingerprint}[/yellow]")
+    console.print(f"  Approved Tool: 'word_count' with parameters: {list(snap_v1.tools['word_count'].input_schema.get('properties', {}).keys())}")
+
+    # Mutate server: retrieve version 2 live over MCP stdio (no static catalog_v2.json shortcut!)
+    client_v2 = MCPCatalogClient([sys.executable, "fixtures/rug_pull/server.py", "--version", "2"], server_id="live_rug_pull")
+    snap_v2 = asyncio.run(client_v2.discover_live())
+    baseline = db.get_baseline("live_rug_pull")
     diff_res = diff_catalogs(baseline, snap_v2)
-    console.print(f"Baseline Hash: [yellow]{diff_res.baseline_fingerprint}[/yellow]")
-    console.print(f"Current Hash:  [red]{diff_res.current_fingerprint}[/red]")
-    console.print(f"Is Identical:  [bold red]{diff_res.is_identical}[/bold red]")
-    if diff_res.added_tools:
-        console.print(f"Added Tools:   [green]{', '.join(diff_res.added_tools)}[/green]")
+
+    console.print(f"  Fresh Mutated (v2) Hash:     [red]{diff_res.current_fingerprint}[/red]")
+    console.print(f"  Is Identical:                [bold red]{diff_res.is_identical}[/bold red]")
     if diff_res.modified_tools:
-        console.print(f"Modified:      [yellow]{', '.join(diff_res.modified_tools.keys())}[/yellow]")
+        console.print(f"  [yellow]~ Modified tools:[/yellow] {', '.join(diff_res.modified_tools.keys())}")
+        for tname, mfields in diff_res.modified_tools.items():
+            for fname, fvals in mfields.items():
+                console.print(f"    * {tname}.{fname}: [dim]{fvals['baseline']}[/dim] -> [bold cyan]{fvals['current']}[/bold cyan]")
 
     console.print("\n[bold green]✔ MASTER 5-STAGE DEMONSTRATION COMPLETE — ALL GATES VERIFIED.[/bold green]\n")
 

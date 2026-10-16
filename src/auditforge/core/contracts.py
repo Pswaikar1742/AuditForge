@@ -190,4 +190,6 @@ class ScanResult(BaseModel):
     findings: List[Finding] = Field(default_factory=list, description="All verified findings")
     evidence: List[EvidenceRecord] = Field(default_factory=list, description="Verifiable evidence capsules")
     probe_outcomes: List[ProbeOutcome] = Field(default_factory=list, description="Dynamic probe results")
+    stage_coverage: Dict[str, str] = Field(default_factory=dict, description="Stage outcomes: PASS, ERROR, SKIPPED, UNKNOWN")
+    scan_mode: str = Field(default="LIVE_SCAN", description="Audit modality: LIVE_SCAN or SNAPSHOT_ANALYSIS")
     summary: str = Field(default="", description="High-level audit executive summary")

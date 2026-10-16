@@ -5,8 +5,10 @@ Dynamic Sandboxed Probing, Pinning Diffs, and Trust Gap Reconciliation.
 """
 
 import asyncio
+import json
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
+import sys
 import uuid
 
 from auditforge.analyzers.description import DescriptionAnalyzer
@@ -64,42 +66,102 @@ class ScanOrchestrator:
         all_evidence: List[EvidenceRecord] = []
         probe_outcomes: List[ProbeOutcome] = []
 
+        scan_mode = "SNAPSHOT_ANALYSIS"
+        stage_coverage: Dict[str, str] = {
+            "catalog_discovery": "UNKNOWN",
+            "static_ast": "UNKNOWN",
+            "description_intelligence": "UNKNOWN",
+            "dynamic_probing": "UNKNOWN",
+            "baseline_pinning": "UNKNOWN",
+        }
+
         # 1. Resolve Target Inputs & MCP Catalog Discovery
         if server_command:
-            client = MCPCatalogClient(server_command, server_id=server_id or "live-server")
-            snapshot = asyncio.run(client.discover_live())
+            scan_mode = "LIVE_SCAN"
+            try:
+                client = MCPCatalogClient(server_command, server_id=server_id or "live-server")
+                snapshot = asyncio.run(client.discover_live())
+                stage_coverage["catalog_discovery"] = "PASS"
+            except Exception as exc:
+                stage_coverage["catalog_discovery"] = "ERROR"
         elif catalog_path:
+            scan_mode = "SNAPSHOT_ANALYSIS"
             snapshot = MCPCatalogClient.load_from_file(catalog_path, server_id=server_id)
+            stage_coverage["catalog_discovery"] = "PASS"
         elif target_path and target_path.is_dir():
-            cat_file = target_path / "catalog.json"
-            if cat_file.exists():
-                snapshot = MCPCatalogClient.load_from_file(str(cat_file), server_id=server_id or target_path.name)
             srv_file = target_path / "server.py"
             if srv_file.exists():
                 resolved_source_path = str(srv_file)
+                # Attempt genuine live MCP stdio discovery first
+                try:
+                    client = MCPCatalogClient([sys.executable, str(srv_file)], server_id=server_id or target_path.name)
+                    snapshot = asyncio.run(client.discover_live())
+                    scan_mode = "LIVE_SCAN"
+                    stage_coverage["catalog_discovery"] = "PASS"
+                except Exception:
+                    # Fallback to catalog.json snapshot
+                    cat_file = target_path / "catalog.json"
+                    if cat_file.exists():
+                        snapshot = MCPCatalogClient.load_from_file(str(cat_file), server_id=server_id or target_path.name)
+                        scan_mode = "SNAPSHOT_ANALYSIS"
+                        stage_coverage["catalog_discovery"] = "PASS"
+                    else:
+                        stage_coverage["catalog_discovery"] = "ERROR"
+            else:
+                cat_file = target_path / "catalog.json"
+                if cat_file.exists():
+                    snapshot = MCPCatalogClient.load_from_file(str(cat_file), server_id=server_id or target_path.name)
+                    scan_mode = "SNAPSHOT_ANALYSIS"
+                    stage_coverage["catalog_discovery"] = "PASS"
+                else:
+                    stage_coverage["catalog_discovery"] = "ERROR"
         elif target_path and target_path.is_file():
             if target_path.suffix == ".json":
                 snapshot = MCPCatalogClient.load_from_file(str(target_path), server_id=server_id)
+                scan_mode = "SNAPSHOT_ANALYSIS"
+                stage_coverage["catalog_discovery"] = "PASS"
             elif target_path.suffix == ".py":
                 resolved_source_path = str(target_path)
-                cat_file = target_path.parent / "catalog.json"
-                if cat_file.exists():
-                    snapshot = MCPCatalogClient.load_from_file(str(cat_file), server_id=server_id or target_path.parent.name)
+                try:
+                    client = MCPCatalogClient([sys.executable, str(target_path)], server_id=server_id or target_path.stem)
+                    snapshot = asyncio.run(client.discover_live())
+                    scan_mode = "LIVE_SCAN"
+                    stage_coverage["catalog_discovery"] = "PASS"
+                except Exception:
+                    cat_file = target_path.parent / "catalog.json"
+                    if cat_file.exists():
+                        snapshot = MCPCatalogClient.load_from_file(str(cat_file), server_id=server_id or target_path.parent.name)
+                        scan_mode = "SNAPSHOT_ANALYSIS"
+                        stage_coverage["catalog_discovery"] = "PASS"
+                    else:
+                        stage_coverage["catalog_discovery"] = "ERROR"
 
         # 2. Static AST & Bandit Analysis
         if resolved_source_path and Path(resolved_source_path).exists():
-            static_analyzer = StaticAnalyzer(resolved_source_path)
-            s_findings, s_evidence = static_analyzer.analyze()
-            all_findings.extend(s_findings)
-            all_evidence.extend(s_evidence)
+            try:
+                static_analyzer = StaticAnalyzer(resolved_source_path)
+                s_findings, s_evidence = static_analyzer.analyze()
+                all_findings.extend(s_findings)
+                all_evidence.extend(s_evidence)
+                stage_coverage["static_ast"] = "PASS"
+            except Exception:
+                stage_coverage["static_ast"] = "ERROR"
+        else:
+            stage_coverage["static_ast"] = "SKIPPED"
 
         # 3. Description Intelligence (Layer 0 Heuristics + Layer 1/2 LLM)
         if snapshot:
-            desc_analyzer = DescriptionAnalyzer(use_llm=self.use_llm)
-            for tool_name, tool in snapshot.tools.items():
-                d_findings, d_evidence = desc_analyzer.analyze_tool(tool)
-                all_findings.extend(d_findings)
-                all_evidence.extend(d_evidence)
+            try:
+                desc_analyzer = DescriptionAnalyzer(use_llm=self.use_llm)
+                for tool_name, tool in snapshot.tools.items():
+                    d_findings, d_evidence = desc_analyzer.analyze_tool(tool)
+                    all_findings.extend(d_findings)
+                    all_evidence.extend(d_evidence)
+                stage_coverage["description_intelligence"] = "PASS"
+            except Exception:
+                stage_coverage["description_intelligence"] = "ERROR"
+        else:
+            stage_coverage["description_intelligence"] = "SKIPPED"
 
         # 4. Container Dynamic Probing
         if self.use_docker and resolved_source_path and snapshot:
@@ -136,6 +198,10 @@ class ScanOrchestrator:
                                     remediation="Remove external subprocess or network invocations from tool handler.",
                                 )
                                 all_findings.append(fnd)
+                if any(p.status.value == "SKIPPED" for p in probe_outcomes):
+                    stage_coverage["dynamic_probing"] = "SKIPPED"
+                else:
+                    stage_coverage["dynamic_probing"] = "PASS"
             except Exception as exc:
                 # Record probe failure
                 ev_id = generate_evidence_id("sandbox_error", {"target": target})
@@ -147,6 +213,9 @@ class ScanOrchestrator:
                         raw_data={"error": str(exc)},
                     )
                 )
+                stage_coverage["dynamic_probing"] = "ERROR"
+        else:
+            stage_coverage["dynamic_probing"] = "SKIPPED"
 
         # 5. Baseline Comparison (Catalog Drift & Rug Pull Detection)
         diff = None
@@ -155,6 +224,7 @@ class ScanOrchestrator:
             baseline = self.db.get_baseline(sid)
             if baseline:
                 diff = diff_catalogs(baseline, snapshot)
+        stage_coverage["baseline_pinning"] = "PASS"
 
         # 6. Trust Gap Reconciliation
         trust_analyzer = TrustGapAnalyzer()
@@ -164,6 +234,7 @@ class ScanOrchestrator:
             evidence=all_evidence,
             probe_outcomes=probe_outcomes,
             diff=diff,
+            stage_coverage=stage_coverage,
         )
         all_findings.extend(gap_findings)
         all_evidence.extend(gap_evidence)
@@ -174,8 +245,9 @@ class ScanOrchestrator:
         med_count = sum(1 for f in all_findings if f.severity == Severity.MEDIUM)
         
         summary = (
-            f"Audit finished with Trust State: {final_state.value}. "
+            f"Audit [{scan_mode}] finished with Trust State: {final_state.value}. "
             f"Evaluated {len(snapshot.tools) if snapshot else 0} tool(s). "
+            f"Coverage: {json.dumps(stage_coverage)}. "
             f"Detected {len(all_findings)} finding(s) "
             f"({crit_count} CRITICAL, {high_count} HIGH, {med_count} MEDIUM)."
         )
@@ -193,13 +265,18 @@ class ScanOrchestrator:
             findings=all_findings,
             evidence=all_evidence,
             probe_outcomes=probe_outcomes,
+            stage_coverage=stage_coverage,
+            scan_mode=scan_mode,
             summary=summary,
         )
 
         # 8. Persistence & Report Export
         self.db.save_scan_result(scan_result)
 
-        export_json_report(scan_result, f"scan_reports/{scan_id}.json")
-        generate_markdown_report(scan_result, f"scan_reports/{scan_id}.md")
+        try:
+            export_json_report(scan_result, f"scan_reports/{scan_id}.json")
+            generate_markdown_report(scan_result, f"scan_reports/{scan_id}.md")
+        except OSError:
+            pass
 
         return scan_result

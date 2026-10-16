@@ -4,7 +4,7 @@ Reconciles claimed capabilities (annotations, descriptions) against observed
 static AST findings, guest telemetry events, and baseline drift.
 """
 
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from auditforge.core.contracts import (
     CatalogDiff,
     EvidenceRecord,
@@ -28,6 +28,7 @@ class TrustGapAnalyzer:
         evidence: List[EvidenceRecord],
         probe_outcomes: List[ProbeOutcome],
         diff: Optional[CatalogDiff] = None,
+        stage_coverage: Optional[Dict[str, str]] = None,
     ) -> Tuple[TrustState, List[Finding], List[EvidenceRecord]]:
         """Evaluate contract-to-behavior gaps and return overall TrustState along with trust-gap findings."""
         gap_findings: List[Finding] = []
@@ -44,10 +45,12 @@ class TrustGapAnalyzer:
                     annotations.get("readOnly") is True
                     or annotations.get("read_only") is True
                     or annotations.get("read_only_hint") is True
+                    or annotations.get("readOnlyHint") is True
                 )
                 is_claimed_non_destructive = (
                     annotations.get("destructive") is False
                     or annotations.get("destructive_hint") is False
+                    or annotations.get("destructiveHint") is False
                 )
 
                 if is_claimed_readonly or is_claimed_non_destructive:
@@ -74,34 +77,69 @@ class TrustGapAnalyzer:
                                         destructive_probes.append(p)
                                         break
 
-                    if destructive_findings or destructive_probes:
-                        ev_id = generate_evidence_id("trust_gap", {"tool": name, "claimed": "readOnly"})
+                    if destructive_probes:
+                        # Runtime telemetry actually trapped mutating actions inside container
+                        ev_id = generate_evidence_id("trust_gap_runtime", {"tool": name, "claimed": "readOnly"})
                         ev = EvidenceRecord(
                             evidence_id=ev_id,
                             source="trust_gap_reconciler",
                             tool_name=name,
-                            summary=f"Trust Gap: Tool '{name}' claims readOnly/non-destructive, but observed executing state mutations.",
+                            summary=f"Trust Gap (OBSERVED_ATTEMPT): Tool '{name}' claims readOnly/non-destructive, but runtime telemetry trapped unauthorized state mutations.",
                             raw_data={
                                 "tool_name": name,
+                                "provenance": "OBSERVED_ATTEMPT",
                                 "annotations": annotations,
-                                "conflicting_findings": [f.rule_id for f in destructive_findings],
                                 "telemetry_matches": len(destructive_probes),
                             },
                         )
                         gap_evidence.append(ev)
 
+                        probe_ev_ids = [p.evidence_id for p in destructive_probes if p.evidence_id]
                         gap_finding = Finding(
-                            id=generate_finding_id("TRUST-GAP-READONLY", name),
+                            id=generate_finding_id("TRUST-GAP-RUNTIME", name),
                             rule_id="TRUST-GAP-001",
-                            severity=Severity.CRITICAL if has_critical else Severity.HIGH,
+                            severity=Severity.CRITICAL if any(f.severity == Severity.CRITICAL for f in destructive_findings) else Severity.HIGH,
+                            tool_name=name,
+                            evidence_ids=[ev_id] + probe_ev_ids,
+                            reason=(
+                                f"Contract violation (OBSERVED_ATTEMPT): Tool '{name}' declares readOnly=True / destructive=False in MCP annotations, "
+                                f"but dynamic sandbox telemetry OBSERVED execution of mutating operations during probing."
+                            ),
+                            confidence=1.0,
+                            remediation="Correct the metadata annotations or remove mutating operations from tool handler.",
+                        )
+                        gap_findings.append(gap_finding)
+
+                    elif destructive_findings:
+                        # Static AST only: LIKELY / SOURCE_INDICATOR (no runtime execution observed)
+                        ev_id = generate_evidence_id("trust_gap_static", {"tool": name, "claimed": "readOnly"})
+                        conflicting = [f.rule_id for f in destructive_findings]
+                        ev = EvidenceRecord(
+                            evidence_id=ev_id,
+                            source="trust_gap_reconciler",
+                            tool_name=name,
+                            summary=f"Trust Gap (SOURCE_INDICATOR / LIKELY): Tool '{name}' claims readOnly/non-destructive, but static AST analysis detected state-mutating capability in source.",
+                            raw_data={
+                                "tool_name": name,
+                                "provenance": "SOURCE_INDICATOR",
+                                "annotations": annotations,
+                                "conflicting_findings": conflicting,
+                            },
+                        )
+                        gap_evidence.append(ev)
+
+                        gap_finding = Finding(
+                            id=generate_finding_id("TRUST-GAP-STATIC", name),
+                            rule_id="TRUST-GAP-001",
+                            severity=Severity.HIGH,
                             tool_name=name,
                             evidence_ids=[ev_id] + [eid for f in destructive_findings for eid in f.evidence_ids],
                             reason=(
-                                f"Contract violation: Tool '{name}' declares readOnly=True / destructive=False in MCP annotations, "
-                                f"but observed performing state mutations or subprocess invocations."
+                                f"Contract discrepancy (SOURCE_INDICATOR / LIKELY): Tool '{name}' declares readOnly=True / destructive=False in MCP annotations, "
+                                f"but static source inspection detected state mutation or process execution capabilities ({', '.join(conflicting)}). No runtime execution confirmed."
                             ),
-                            confidence=0.98,
-                            remediation="Correct the metadata annotations or remove mutating operations from handler.",
+                            confidence=0.85,
+                            remediation="Review tool source code to remove mutating operations or update MCP annotations.",
                         )
                         gap_findings.append(gap_finding)
 
@@ -147,8 +185,20 @@ class TrustGapAnalyzer:
         elif any(f.severity in {Severity.MEDIUM, Severity.LOW} for f in all_findings):
             state = TrustState.SUSPICIOUS
         elif snapshot and len(snapshot.tools) > 0 and len(all_findings) == 0:
-            # Verified only if tools exist and zero findings
-            state = TrustState.VERIFIED
+            # Verified ONLY if tools exist, zero findings, and required detectors passed
+            if stage_coverage:
+                has_error = any(v == "ERROR" for v in stage_coverage.values())
+                mandatory_failed = any(
+                    stage_coverage.get(st) in {"ERROR", "SKIPPED", "UNKNOWN"}
+                    for st in ("catalog_discovery", "static_ast", "description_intelligence")
+                )
+                if has_error or mandatory_failed:
+                    # Incomplete detector coverage cannot be claimed as safety proof
+                    state = TrustState.UNKNOWN
+                else:
+                    state = TrustState.VERIFIED
+            else:
+                state = TrustState.VERIFIED
         else:
             state = TrustState.UNKNOWN
 
