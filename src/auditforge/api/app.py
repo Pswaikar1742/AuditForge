@@ -75,6 +75,8 @@ FIXTURES_META = [
         "id": "clean_reader",
         "name": "Fixture A: Clean Reader",
         "role": "Negative Control",
+        "category": "COMPETITION LIVE MCP",
+        "execution_mode": "LIVE_SCAN",
         "expected": "0 Vulnerabilities (TrustState: VERIFIED)",
         "tags": ["Read-Only", "No Execution", "Safe Baseline"],
         "path": "fixtures/clean_reader",
@@ -83,6 +85,8 @@ FIXTURES_META = [
         "id": "rogue_server",
         "name": "Fixture B: Rogue Server (Vulnerable)",
         "role": "Positive Control",
+        "category": "COMPETITION LIVE MCP",
+        "execution_mode": "LIVE_SCAN",
         "expected": "AST-SHELL-001 Shell Execution & AST-SUBPROCESS-001 (TrustState: ROGUE)",
         "tags": ["Command Injection", "os.system", "Subprocess"],
         "path": "fixtures/rogue_server",
@@ -91,6 +95,8 @@ FIXTURES_META = [
         "id": "rogue_server_patched",
         "name": "Fixture B (Patched): Safe Diagnostic",
         "role": "Remediated Control",
+        "category": "PATCHED MCP",
+        "execution_mode": "LIVE_SCAN",
         "expected": "0 Vulnerabilities (TrustState: VERIFIED, No Subprocess/Shell)",
         "tags": ["Remediated", "In-Memory Diagnostic", "Safe"],
         "path": "fixtures/rogue_server_patched",
@@ -99,6 +105,8 @@ FIXTURES_META = [
         "id": "poisoned_description",
         "name": "Fixture C: Poisoned Description (Vulnerable)",
         "role": "Prompt Injection Control",
+        "category": "COMPETITION LIVE MCP",
+        "execution_mode": "LIVE_SCAN",
         "expected": "DESC-INJECT-001 Directive & DESC-EXFIL-001 Credential Theft (TrustState: ROGUE)",
         "tags": ["Prompt Injection", "Secret Exfiltration", "Adversarial NLP"],
         "path": "fixtures/poisoned_description",
@@ -107,6 +115,8 @@ FIXTURES_META = [
         "id": "poisoned_description_patched",
         "name": "Fixture C (Patched): Clean Metadata",
         "role": "Remediated Control",
+        "category": "PATCHED MCP",
+        "execution_mode": "LIVE_SCAN",
         "expected": "0 Vulnerabilities (TrustState: VERIFIED, No Injection)",
         "tags": ["Remediated", "Clean Description", "Safe"],
         "path": "fixtures/poisoned_description_patched",
@@ -115,6 +125,8 @@ FIXTURES_META = [
         "id": "lying_annotations",
         "name": "Fixture D: Lying Annotations (Vulnerable)",
         "role": "Trust Gap Demonstration",
+        "category": "COMPETITION LIVE MCP",
+        "execution_mode": "LIVE_SCAN",
         "expected": "TRUST-GAP-001 Contract-to-Behavior Trust Gap Violation (TrustState: TRUST_GAP)",
         "tags": ["Trust Gap USP", "readOnlyHint Violation", "Static & Dynamic"],
         "path": "fixtures/lying_annotations",
@@ -123,6 +135,8 @@ FIXTURES_META = [
         "id": "lying_annotations_patched",
         "name": "Fixture D (Patched): Genuine Read-Only",
         "role": "Remediated Control",
+        "category": "PATCHED MCP",
+        "execution_mode": "LIVE_SCAN",
         "expected": "0 Vulnerabilities (TrustState: VERIFIED, No Deletion)",
         "tags": ["Remediated", "Genuine Read-Only", "Safe"],
         "path": "fixtures/lying_annotations_patched",
@@ -131,9 +145,92 @@ FIXTURES_META = [
         "id": "rug_pull",
         "name": "Fixture E: Rug Pull (Catalog Drift)",
         "role": "Cryptographic Pin-and-Diff",
+        "category": "COMPETITION LIVE MCP",
+        "execution_mode": "LIVE_SCAN",
         "expected": "PIN-RUGPULL-001 Baseline Hash Mismatch",
         "tags": ["Rug Pull Defense", "SHA-256 Pinning", "Drift Detection"],
         "path": "fixtures/rug_pull",
+    },
+    # Source-Only Reference Benchmarks (Public Corpus)
+    {
+        "id": "official-mcp-time",
+        "name": "Official MCP Time",
+        "role": "Public Reference Benchmark",
+        "category": "SOURCE-ONLY REFERENCE BENCHMARK",
+        "execution_mode": "SNAPSHOT_ANALYSIS",
+        "expected": "0 Static Findings (Clean Time Tools)",
+        "tags": ["Source-Only", "Official Reference", "Deterministic"],
+        "path": "benchmarks/targets/official-mcp-time",
+    },
+    {
+        "id": "official-mcp-fetch",
+        "name": "Official MCP Fetch",
+        "role": "Public Reference Benchmark",
+        "category": "SOURCE-ONLY REFERENCE BENCHMARK",
+        "execution_mode": "SNAPSHOT_ANALYSIS",
+        "expected": "BANDIT-B310 URL Open (Source Indicator)",
+        "tags": ["Source-Only", "Official Reference", "Network"],
+        "path": "benchmarks/targets/official-mcp-fetch",
+    },
+    {
+        "id": "official-mcp-git",
+        "name": "Official MCP Git",
+        "role": "Public Reference Benchmark",
+        "category": "SOURCE-ONLY REFERENCE BENCHMARK",
+        "execution_mode": "SNAPSHOT_ANALYSIS",
+        "expected": "AST-SUBPROCESS-001/002 Git Process Execution",
+        "tags": ["Source-Only", "Official Reference", "Subprocess"],
+        "path": "benchmarks/targets/official-mcp-git",
+    },
+    {
+        "id": "official-mcp-filesystem",
+        "name": "Official MCP Filesystem",
+        "role": "Public Reference Benchmark",
+        "category": "SOURCE-ONLY REFERENCE BENCHMARK",
+        "execution_mode": "SNAPSHOT_ANALYSIS",
+        "expected": "AST-FILE-001 Filesystem Access",
+        "tags": ["Source-Only", "Official Reference", "Filesystem"],
+        "path": "benchmarks/targets/official-mcp-filesystem",
+    },
+    {
+        "id": "appsecco-secrets-pii",
+        "name": "Appsecco Secrets & PII",
+        "role": "Public Reference Benchmark",
+        "category": "SOURCE-ONLY REFERENCE BENCHMARK",
+        "execution_mode": "SNAPSHOT_ANALYSIS",
+        "expected": "Deterministic Baseline (No Shell)",
+        "tags": ["Source-Only", "Appsecco", "Secrets"],
+        "path": "benchmarks/targets/appsecco-secrets-pii",
+    },
+    {
+        "id": "appsecco-filesystem-workspace-actions",
+        "name": "Appsecco Workspace Actions",
+        "role": "Public Reference Benchmark",
+        "category": "SOURCE-ONLY REFERENCE BENCHMARK",
+        "execution_mode": "SNAPSHOT_ANALYSIS",
+        "expected": "AST-SHELL-001 & BANDIT-B605 Shell Commands",
+        "tags": ["Source-Only", "Appsecco", "Shell Command"],
+        "path": "benchmarks/targets/appsecco-filesystem-workspace-actions",
+    },
+    {
+        "id": "appsecco-indirect-prompt-injection",
+        "name": "Appsecco Indirect Prompt Injection",
+        "role": "Public Reference Benchmark",
+        "category": "SOURCE-ONLY REFERENCE BENCHMARK",
+        "execution_mode": "SNAPSHOT_ANALYSIS",
+        "expected": "DESC-INJECT-001/002 & DESC-EXFIL-001",
+        "tags": ["Source-Only", "Appsecco", "Prompt Injection"],
+        "path": "benchmarks/targets/appsecco-indirect-prompt-injection",
+    },
+    {
+        "id": "appsecco-malicious-tools",
+        "name": "Appsecco Malicious Tools",
+        "role": "Public Reference Benchmark",
+        "category": "SOURCE-ONLY REFERENCE BENCHMARK",
+        "execution_mode": "SNAPSHOT_ANALYSIS",
+        "expected": "BANDIT-B307 Insecure Eval",
+        "tags": ["Source-Only", "Appsecco", "Eval Execution"],
+        "path": "benchmarks/targets/appsecco-malicious-tools",
     },
 ]
 
@@ -155,11 +252,14 @@ class ScanRequest(BaseModel):
 
 
 def _format_scan_dict(res: ScanResult) -> Dict[str, Any]:
-    """Format ScanResult dict ensuring both id/scan_id and server_name are populated for UI."""
+    """Format ScanResult dict ensuring id/scan_id, server_name, catalog_hash, status, and scan_mode are populated for UI."""
     data = res.model_dump()
     data["id"] = res.scan_id
     server_name = res.snapshot.server_id if res.snapshot else Path(res.target).name
     data["server_name"] = server_name
+    data["catalog_hash"] = res.snapshot.catalog_fingerprint if res.snapshot else None
+    data["status"] = "COMPLETED" if res.completed_at else "IN_PROGRESS"
+    data["scan_mode"] = res.scan_mode
     return data
 
 
@@ -257,16 +357,25 @@ def export_scan_report(scan_id: str, format: str = "json") -> Response:
         raise HTTPException(status_code=400, detail=f"Unsupported format '{format}'. Use 'json' or 'markdown'.")
 
 
+KNOWN_VULNERABLE_SERVERS = {"rogue_server", "poisoned_description", "lying_annotations"}
+
+
+class ApproveRequest(BaseModel):
+    reapprove: bool = False
+    force: bool = False
+
+
 @app.post("/scan")
 @app.post("/api/scan")
 def trigger_scan(req: ScanRequest) -> Dict[str, Any]:
     """Trigger a security audit scan on an authorized registered target ID."""
-    safe_path, target_name = _validate_safe_target(req.server_path, req.target_id)
+    safe_path, verified_target_id = _validate_safe_target(req.server_path, req.target_id)
     orch = get_orchestrator()
     orch.use_llm = req.use_llm
 
     try:
-        res = orch.run_scan(target=safe_path, server_id=req.server_name or target_name)
+        # Ignore client-controlled server_name to derive trusted server identity strictly from allowlisted target ID
+        res = orch.run_scan(target=safe_path, server_id=verified_target_id)
         return _format_scan_dict(res)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Audit scan failed: {str(e)}")
@@ -292,11 +401,19 @@ def get_baseline(server_id: str) -> Dict[str, Any]:
 
 @app.post("/baselines/{server_id}/approve")
 @app.post("/api/baselines/{server_id}/approve")
-def approve_baseline(server_id: str) -> Dict[str, Any]:
+def approve_baseline(server_id: str, req: Optional[ApproveRequest] = None) -> Dict[str, Any]:
     """Approve and pin the current catalog of a server as its verified baseline."""
+    req_body = req or ApproveRequest()
+    if server_id in KNOWN_VULNERABLE_SERVERS and not req_body.force:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Safety Guard: Cannot approve known vulnerable server '{server_id}' without explicit force=true override.",
+        )
+
     candidate_paths = [
         Path("fixtures") / server_id / "catalog.json",
         Path("fixtures") / server_id / "catalog_v1.json",
+        Path("benchmarks/targets") / server_id / "catalog.json",
         Path(server_id) / "catalog.json",
     ]
     catalog_path = None
@@ -312,35 +429,67 @@ def approve_baseline(server_id: str) -> Dict[str, Any]:
         )
 
     snapshot = MCPCatalogClient.load_from_file(str(catalog_path), server_id=server_id)
-    get_db().save_baseline(snapshot)
+    existing = get_db().get_baseline(server_id)
+    if existing and not req_body.reapprove:
+        return {
+            "status": "PRESERVED_EXISTING",
+            "message": f"Baseline for '{server_id}' already exists and was preserved. Set reapprove=true to overwrite.",
+            "server_id": server_id,
+            "catalog_fingerprint": existing.catalog_fingerprint,
+            "preserved": True,
+        }
+
+    get_db().save_baseline(snapshot, overwrite=req_body.reapprove)
     return {
         "status": "APPROVED",
         "server_id": server_id,
         "catalog_fingerprint": snapshot.catalog_fingerprint,
         "tools_count": len(snapshot.tools),
+        "overwritten": req_body.reapprove and existing is not None,
     }
 
 
 class PinRequest(BaseModel):
     server_id: str
     catalog_path: str
+    reapprove: bool = False
+    force: bool = False
 
 
 @app.post("/pin")
 @app.post("/api/pin")
 def pin_catalog_endpoint(req: PinRequest) -> Dict[str, Any]:
     """Pin a catalog snapshot as an approved baseline."""
-    safe_path, _ = _validate_safe_target(req.catalog_path, req.server_id)
+    safe_path, verified_id = _validate_safe_target(req.catalog_path, req.server_id)
+    target_id = req.server_id or verified_id
+
+    if target_id in KNOWN_VULNERABLE_SERVERS and not req.force:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Safety Guard: Cannot pin known vulnerable server '{target_id}' without explicit force=true override.",
+        )
+
     cat_file = Path(safe_path)
     if cat_file.is_dir():
         cat_file = cat_file / "catalog.json"
-    snapshot = MCPCatalogClient.load_from_file(str(cat_file), server_id=req.server_id)
-    get_db().save_baseline(snapshot)
+    snapshot = MCPCatalogClient.load_from_file(str(cat_file), server_id=target_id)
+    existing = get_db().get_baseline(target_id)
+    if existing and not req.reapprove:
+        return {
+            "status": "PRESERVED_EXISTING",
+            "message": f"Existing baseline for '{target_id}' was preserved. Set reapprove=true to overwrite.",
+            "server_id": target_id,
+            "catalog_fingerprint": existing.catalog_fingerprint,
+            "preserved": True,
+        }
+
+    get_db().save_baseline(snapshot, overwrite=req.reapprove)
     return {
         "status": "PINNED",
-        "server_id": req.server_id,
+        "server_id": target_id,
         "catalog_fingerprint": snapshot.catalog_fingerprint,
         "tools_count": len(snapshot.tools),
+        "overwritten": req.reapprove and existing is not None,
     }
 
 
@@ -388,13 +537,17 @@ def live_rug_pull_demo() -> Dict[str, Any]:
     return {
         "status": "RUG_PULL_DETECTED" if not diff_res.is_identical else "IDENTICAL",
         "server_id": "rug_pull",
+        "target": "rug_pull",
         "baseline_version": "1",
         "baseline_fingerprint": baseline.catalog_fingerprint,
+        "v1_baseline_hash": baseline.catalog_fingerprint,
         "mutated_version": "2",
         "mutated_fingerprint": mutated.catalog_fingerprint,
+        "v2_mutated_hash": mutated.catalog_fingerprint,
         "is_identical": diff_res.is_identical,
         "added_tools": diff_res.added_tools,
         "removed_tools": diff_res.removed_tools,
         "modified_tools": diff_res.modified_tools,
         "diff": diff_res.model_dump(),
+        "explanation": "Live stdio discovery captured capability modification between server versions without static file shortcuts.",
     }

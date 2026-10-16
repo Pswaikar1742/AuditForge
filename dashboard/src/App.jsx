@@ -181,15 +181,25 @@ export default function App() {
   };
 
   const approveBaseline = async (serverName) => {
+    const isVulnerable = ['rogue_server', 'poisoned_description', 'lying_annotations'].includes(serverName);
+    if (isVulnerable && !window.confirm(`⚠️ WARNING: '${serverName}' is a known vulnerable test fixture! Approving it will register malicious behavior as an authorized baseline. Are you sure you want to proceed with force override?`)) {
+      return;
+    }
     try {
       const res = await fetch(`${API_BASE}/api/baselines/${serverName}/approve`, {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reapprove: true, force: isVulnerable }),
       });
       if (res.ok) {
-        setStatusMsg(`Baseline for '${serverName}' approved.`);
+        const data = await res.json();
+        setStatusMsg(data.status === 'PRESERVED_EXISTING' ? data.message : `✔ Approved baseline saved for '${serverName}'.`);
         fetchBaselines();
         fetchScans();
         if (selectedScan) fetchScanDetails(selectedScan.id);
+      } else {
+        const err = await res.json();
+        setStatusMsg(`Approval failed: ${err.detail || 'Unknown error'}`);
       }
     } catch (e) {
       setStatusMsg(`Approval failed: ${e.message}`);
@@ -205,7 +215,14 @@ export default function App() {
       });
       if (res.ok) {
         const data = await res.json();
-        setDiffResult(data.diff || data);
+        const fullDiff = {
+          ...(data.diff || {}),
+          v1_baseline_hash: data.v1_baseline_hash,
+          v2_mutated_hash: data.v2_mutated_hash,
+          explanation: data.explanation,
+          server_id: data.target || 'rug_pull',
+        };
+        setDiffResult(fullDiff);
         setStatusMsg("✔ Live Rug-Pull Detected: Version 2 mutated tool definitions over stdio transport.");
       } else {
         const err = await res.json();
@@ -550,7 +567,13 @@ export default function App() {
 
                 {/* Run Diff Rug Pull Check Button */}
                 <button
-                  onClick={() => runDiff(targetName.includes('rug_pull') ? 'clean_reader' : (targetName || 'clean_reader'), customPath.endsWith('.json') ? customPath : `${customPath}/catalog.json`)}
+                  onClick={() => {
+                    if (targetName === 'rug_pull' || customPath.includes('rug_pull')) {
+                      runLiveRugPullDemo();
+                    } else {
+                      runDiff(targetName || 'clean_reader', customPath.endsWith('.json') ? customPath : `${customPath}/catalog.json`);
+                    }
+                  }}
                   disabled={loading || !customPath}
                   className="btn btn-secondary"
                   style={{ padding: '0.75rem 1.25rem', fontSize: '0.85rem', borderColor: 'rgba(249, 115, 22, 0.4)', color: '#F97316' }}
@@ -576,9 +599,14 @@ export default function App() {
                     </strong>
                     <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Target: {diffResult.server_id}</span>
                   </div>
+                  {diffResult.explanation && (
+                    <div style={{ fontSize: '0.75rem', color: '#CBD5E1', marginBottom: '0.5rem', fontStyle: 'italic' }}>
+                      {diffResult.explanation}
+                    </div>
+                  )}
                   <div style={{ fontSize: '0.8rem', fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>
-                    <div>Baseline Fingerprint: <span style={{ color: '#38BDF8' }}>{diffResult.baseline_fingerprint}</span></div>
-                    <div>Current Fingerprint:  <span style={{ color: diffResult.is_identical ? '#38BDF8' : '#F43F5E' }}>{diffResult.current_fingerprint}</span></div>
+                    <div>Baseline Fingerprint: <span style={{ color: '#38BDF8' }}>{diffResult.baseline_fingerprint || diffResult.v1_baseline_hash}</span></div>
+                    <div>Current Fingerprint:  <span style={{ color: diffResult.is_identical ? '#38BDF8' : '#F43F5E' }}>{diffResult.current_fingerprint || diffResult.v2_mutated_hash}</span></div>
                     {diffResult.added_tools?.length > 0 && (
                       <div style={{ color: '#F43F5E', marginTop: '0.25rem', fontWeight: '700' }}>
                         + Injected Unauthorized Tools: {diffResult.added_tools.join(', ')}
@@ -587,6 +615,26 @@ export default function App() {
                     {diffResult.removed_tools?.length > 0 && (
                       <div style={{ color: '#F97316', marginTop: '0.25rem' }}>
                         - Removed Tools: {diffResult.removed_tools.join(', ')}
+                      </div>
+                    )}
+                    {diffResult.modified_tools && Object.keys(diffResult.modified_tools).length > 0 && (
+                      <div style={{ marginTop: '0.5rem', borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '0.5rem' }}>
+                        <div style={{ color: '#F43F5E', fontWeight: '700', marginBottom: '0.25rem' }}>
+                          ~ Modified Tool Definitions:
+                        </div>
+                        {Object.entries(diffResult.modified_tools).map(([toolName, fields]) => (
+                          <div key={toolName} style={{ marginLeft: '0.5rem', marginBottom: '0.35rem' }}>
+                            <span style={{ color: '#FBBF24', fontWeight: '700' }}>{toolName}</span>:
+                            {Object.entries(fields).map(([fieldName, change]) => (
+                              <div key={fieldName} style={{ marginLeft: '1rem', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                                • <strong style={{ color: '#E2E8F0' }}>{fieldName}</strong>:{' '}
+                                <span style={{ color: '#94A3B8' }}>{typeof change.baseline === 'object' ? JSON.stringify(change.baseline) : String(change.baseline)}</span>
+                                {' → '}
+                                <span style={{ color: '#38BDF8' }}>{typeof change.current === 'object' ? JSON.stringify(change.current) : String(change.current)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        ))}
                       </div>
                     )}
                   </div>
@@ -624,6 +672,25 @@ export default function App() {
                       <div style={{ flex: 1, paddingRight: '1rem' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.35rem' }}>
                           <span style={{ fontWeight: '700', fontSize: '0.95rem' }}>{fix.name}</span>
+                          <span style={{
+                            fontSize: '0.65rem',
+                            padding: '0.15rem 0.45rem',
+                            borderRadius: '4px',
+                            background: fix.category === 'COMPETITION LIVE MCP'
+                              ? 'rgba(16, 185, 129, 0.15)'
+                              : fix.category === 'PATCHED MCP'
+                                ? 'rgba(99, 102, 241, 0.15)'
+                                : 'rgba(245, 158, 11, 0.15)',
+                            color: fix.category === 'COMPETITION LIVE MCP'
+                              ? '#34D399'
+                              : fix.category === 'PATCHED MCP'
+                                ? '#818CF8'
+                                : '#FBBF24',
+                            fontWeight: '700',
+                            border: '1px solid currentColor',
+                          }}>
+                            {fix.category || 'MCP TARGET'}
+                          </span>
                           <span style={{ fontSize: '0.7rem', padding: '0.15rem 0.45rem', borderRadius: '4px', background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}>
                             {fix.role}
                           </span>
@@ -647,24 +714,28 @@ export default function App() {
                         style={{ minWidth: '130px' }}
                       >
                         {loading ? <RefreshCw size={14} className="spin" /> : <Terminal size={14} />}
-                        Audit Server
+                        {fix.execution_mode === 'SNAPSHOT_ANALYSIS' ? 'Analyze Source' : 'Audit Server'}
                       </button>
                     </div>
                   ))}
                 </div>
 
-                {/* Custom Path Scanner Box */}
+                {/* Registered Target Selector */}
                 <div className="glass-panel" style={{ marginTop: '2rem', padding: '1.25rem' }}>
                   <h3 style={{ fontSize: '0.95rem', fontWeight: '700', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <Terminal size={16} color="#06B6D4" />
-                    Audit Custom Local MCP Target Directory
+                    Audit Registered MCP Target ID
                   </h3>
+                  <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
+                    Select an authorized target ID. Arbitrary host paths are blocked by server-side allowlisting.
+                  </p>
                   <div style={{ display: 'flex', gap: '0.75rem' }}>
-                    <input
-                      type="text"
-                      placeholder="e.g. C:\path\to\mcp-server"
+                    <select
                       value={customPath}
-                      onChange={(e) => setCustomPath(e.target.value)}
+                      onChange={(e) => {
+                        setCustomPath(e.target.value);
+                        setTargetName(e.target.value);
+                      }}
                       style={{
                         flex: 1,
                         background: '#05070B',
@@ -675,13 +746,20 @@ export default function App() {
                         fontSize: '0.85rem',
                         fontFamily: 'var(--font-mono)',
                       }}
-                    />
+                    >
+                      <option value="">-- Choose Registered Target ID --</option>
+                      {fixtures.map(f => (
+                        <option key={f.id} value={f.id}>
+                          {f.id} ({f.category})
+                        </option>
+                      ))}
+                    </select>
                     <button
-                      onClick={() => runScan(customPath, 'custom_target')}
+                      onClick={() => runScan(customPath, targetName)}
                       disabled={loading || !customPath}
                       className="btn btn-secondary"
                     >
-                      Scan Custom
+                      Audit Selected
                     </button>
                   </div>
                 </div>
@@ -698,29 +776,57 @@ export default function App() {
                   <div className="glass-panel" style={{ padding: '1.5rem' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
                       <div>
-                        <h3 style={{ fontSize: '1.1rem', fontWeight: '700' }}>{selectedScan.server_name}</h3>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <h3 style={{ fontSize: '1.1rem', fontWeight: '700' }}>{selectedScan.server_name}</h3>
+                          <span style={{
+                            fontSize: '0.65rem',
+                            padding: '0.15rem 0.45rem',
+                            borderRadius: '4px',
+                            background: selectedScan.scan_mode === 'LIVE_SCAN' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(147, 51, 234, 0.15)',
+                            color: selectedScan.scan_mode === 'LIVE_SCAN' ? '#34D399' : '#C084FC',
+                            fontWeight: '700',
+                            border: '1px solid currentColor',
+                            fontFamily: 'var(--font-mono)',
+                          }}>
+                            {selectedScan.scan_mode || 'LIVE_SCAN'}
+                          </span>
+                        </div>
                         <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Scan ID: {selectedScan.id}</span>
                       </div>
                       {renderTrustBadge(selectedScan.trust_state)}
                     </div>
 
-                    <div style={{ borderTop: '1px solid var(--border-subtle)', borderBottom: '1px solid var(--border-subtle)', padding: '1rem 0', margin: '1rem 0', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', fontSize: '0.8rem' }}>
+                    <div style={{ borderTop: '1px solid var(--border-subtle)', borderBottom: '1px solid var(--border-subtle)', padding: '0.85rem 0', margin: '0.85rem 0', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', fontSize: '0.8rem' }}>
                       <div>
-                        <span style={{ color: 'var(--text-muted)' }}>Catalog Hash:</span>
+                        <span style={{ color: 'var(--text-muted)' }}>Catalog Fingerprint:</span>
                         <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: '#38BDF8', marginTop: '0.2rem' }}>
-                          {selectedScan.catalog_hash ? `${selectedScan.catalog_hash.slice(0, 16)}...` : 'N/A'}
+                          {selectedScan.snapshot?.catalog_fingerprint
+                            ? `${selectedScan.snapshot.catalog_fingerprint.slice(0, 16)}...`
+                            : selectedScan.catalog_hash
+                              ? `${selectedScan.catalog_hash.slice(0, 16)}...`
+                              : 'N/A'}
                         </div>
                       </div>
                       <div>
-                        <span style={{ color: 'var(--text-muted)' }}>Status:</span>
-                        <div style={{ fontWeight: '600', color: selectedScan.status === 'COMPLETED' ? '#10B981' : '#F43F5E', marginTop: '0.2rem' }}>
-                          {selectedScan.status}
+                        <span style={{ color: 'var(--text-muted)' }}>Execution Status:</span>
+                        <div style={{ fontWeight: '600', color: selectedScan.completed_at ? '#10B981' : '#F43F5E', marginTop: '0.2rem' }}>
+                          {selectedScan.completed_at ? 'COMPLETED' : (selectedScan.status || 'IN_PROGRESS')}
                         </div>
                       </div>
                       <div>
-                        <span style={{ color: 'var(--text-muted)' }}>Baseline Match:</span>
-                        <div style={{ fontWeight: '600', color: selectedScan.baseline_match ? '#10B981' : '#F59E0B', marginTop: '0.2rem' }}>
-                          {selectedScan.baseline_match ? '✓ Matches Baseline' : '⚠️ Drift / New Target'}
+                        <span style={{ color: 'var(--text-muted)' }}>Baseline Pinning:</span>
+                        <div style={{ fontWeight: '600', marginTop: '0.2rem' }}>
+                          {(() => {
+                            if (selectedScan.diff) {
+                              return selectedScan.diff.is_identical
+                                ? <span style={{ color: '#10B981' }}>✓ Matches Baseline</span>
+                                : <span style={{ color: '#F43F5E' }}>⚠️ Catalog Drift Detected</span>;
+                            }
+                            if (selectedScan.stage_coverage?.baseline_pinning === 'NOT_PINNED') {
+                              return <span style={{ color: '#F59E0B' }}>⚪ Not Pinned (New Target)</span>;
+                            }
+                            return <span style={{ color: '#64748B' }}>— Baseline Skipped</span>;
+                          })()}
                         </div>
                       </div>
                       <div>
@@ -730,6 +836,48 @@ export default function App() {
                         </div>
                       </div>
                     </div>
+
+                    {/* Stage Coverage Verification Gates */}
+                    <div style={{ marginBottom: '0.85rem' }}>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: '600' }}>Stage Coverage & Gates:</span>
+                      <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap', marginTop: '0.35rem' }}>
+                        {Object.entries(selectedScan.stage_coverage || {}).map(([stg, outcome]) => {
+                          const isPass = outcome === 'PASS';
+                          const isErr = outcome === 'ERROR';
+                          const isNotPinned = outcome === 'NOT_PINNED';
+                          const bg = isPass ? 'rgba(16, 185, 129, 0.12)' : isErr ? 'rgba(244, 63, 94, 0.12)' : isNotPinned ? 'rgba(245, 158, 11, 0.12)' : 'rgba(255, 255, 255, 0.04)';
+                          const clr = isPass ? '#34D399' : isErr ? '#F43F5E' : isNotPinned ? '#FBBF24' : '#94A3B8';
+                          const bdr = isPass ? '1px solid rgba(16, 185, 129, 0.3)' : isErr ? '1px solid rgba(244, 63, 94, 0.3)' : isNotPinned ? '1px solid rgba(245, 158, 11, 0.3)' : '1px solid var(--border-subtle)';
+                          return (
+                            <span key={stg} style={{ fontSize: '0.65rem', padding: '0.15rem 0.4rem', borderRadius: '4px', background: bg, color: clr, border: bdr, fontFamily: 'var(--font-mono)' }}>
+                              {stg}: {outcome}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Dynamic Probe Outcomes */}
+                    {selectedScan.probe_outcomes && selectedScan.probe_outcomes.length > 0 && (
+                      <div style={{ marginBottom: '0.85rem', background: 'rgba(0,0,0,0.2)', padding: '0.5rem', borderRadius: '6px', border: '1px solid var(--border-subtle)' }}>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: '600' }}>
+                          Containerized Probe Outcomes ({selectedScan.probe_outcomes.length}):
+                        </span>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', marginTop: '0.35rem' }}>
+                          {selectedScan.probe_outcomes.map((p, idx) => {
+                            const isOk = p.status === 'OK';
+                            const isErr = p.status === 'TOOL_ERROR' || p.status === 'TIMEOUT' || p.status === 'UNKNOWN';
+                            const pColor = isOk ? '#34D399' : isErr ? '#F43F5E' : '#FBBF24';
+                            return (
+                              <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', fontFamily: 'var(--font-mono)' }}>
+                                <span>{p.tool_name} [{p.case_id}]</span>
+                                <span style={{ color: pColor, fontWeight: '700' }}>{p.status} ({Math.round(p.duration_ms || 0)}ms)</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
 
                     {/* Quick Findings Breakdown */}
                     <div style={{ marginBottom: '1.25rem' }}>

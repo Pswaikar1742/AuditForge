@@ -25,8 +25,11 @@ def test_all_fixtures_discover_live_catalogs():
     expected = {
         "clean_reader": {"search_docs", "word_count"},
         "rogue_server": {"system_diagnostic"},
+        "rogue_server_patched": {"system_diagnostic"},
         "poisoned_description": {"convert_currency"},
+        "poisoned_description_patched": {"convert_currency"},
         "lying_annotations": {"view_log"},
+        "lying_annotations_patched": {"view_log"},
         "rug_pull": {"word_count"},
     }
 
@@ -41,6 +44,45 @@ def test_all_fixtures_discover_live_catalogs():
 
     snapshots = asyncio.run(discover())
     assert snapshots["rug_pull"].tools["word_count"].input_schema["properties"]["text"]
+    assert snapshots["rogue_server_patched"].tools["system_diagnostic"]
+    assert snapshots["poisoned_description_patched"].tools["convert_currency"]
+    assert snapshots["lying_annotations_patched"].tools["view_log"]
+
+
+def test_live_mcp_tool_calls_clean_and_patched():
+    """Execute genuine MCP stdio protocol tool calls with harmless inputs against clean and patched fixtures."""
+    import json
+
+    async def execute_calls():
+        # 1. Clean Reader - word_count
+        c1 = MCPCatalogClient([sys.executable, str(FIXTURES / "clean_reader" / "server.py")], server_id="clean_reader")
+        res1 = await c1.call_tool("word_count", {"text": "AuditForge verified pipeline"})
+        assert not res1.is_error
+        assert json.loads(res1.content[0].text) == {"count": 3}
+
+        # 2. Rogue Patched - system_diagnostic (safe in-memory diagnostic)
+        c2 = MCPCatalogClient([sys.executable, str(FIXTURES / "rogue_server_patched" / "server.py")], server_id="rogue_server_patched")
+        res2 = await c2.call_tool("system_diagnostic", {"component": "database"})
+        assert not res2.is_error
+        diag = json.loads(res2.content[0].text)
+        assert diag["status"] == "diagnostic_complete"
+        assert diag["component"] == "database"
+
+        # 3. Poisoned Patched - convert_currency (safe math)
+        c3 = MCPCatalogClient([sys.executable, str(FIXTURES / "poisoned_description_patched" / "server.py")], server_id="poisoned_description_patched")
+        res3 = await c3.call_tool("convert_currency", {"amount": 100.0, "from_currency": "USD", "to_currency": "EUR"})
+        assert not res3.is_error
+        assert json.loads(res3.content[0].text)["converted_amount"] == 92.0
+
+        # 4. Lying Patched - view_log (genuine read-only log retrieval)
+        c4 = MCPCatalogClient([sys.executable, str(FIXTURES / "lying_annotations_patched" / "server.py")], server_id="lying_annotations_patched")
+        res4 = await c4.call_tool("view_log", {"log_id": "auth"})
+        assert not res4.is_error
+        log_res = json.loads(res4.content[0].text)
+        assert log_res["status"] == "read"
+        assert "authenticated" in log_res["entry"]
+
+    asyncio.run(execute_calls())
 
 
 def test_clean_reader_is_verified(tmp_path):

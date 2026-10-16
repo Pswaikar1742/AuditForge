@@ -82,23 +82,44 @@ class Database:
             """)
             conn.commit()
 
-    def save_baseline(self, snapshot: ServerSnapshot) -> None:
-        """Insert an explicitly approved baseline; preserve any existing approval."""
+    def save_baseline(self, snapshot: ServerSnapshot, overwrite: bool = False) -> bool:
+        """Insert an explicitly approved baseline; preserve any existing approval unless overwrite is True.
+
+        Returns True if a new baseline was inserted or overwritten,
+        False if an existing baseline already existed and was preserved.
+        """
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                """
-                INSERT OR IGNORE INTO baselines (server_id, catalog_fingerprint, snapshot_json, created_at)
-                VALUES (?, ?, ?, ?)
-                """,
-                (
-                    snapshot.server_id,
-                    snapshot.catalog_fingerprint,
-                    canonical_json(snapshot.model_dump(mode="json")),
-                    snapshot.timestamp,
-                ),
-            )
-            conn.commit()
+            if overwrite:
+                cursor.execute(
+                    """
+                    INSERT OR REPLACE INTO baselines (server_id, catalog_fingerprint, snapshot_json, created_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        snapshot.server_id,
+                        snapshot.catalog_fingerprint,
+                        canonical_json(snapshot.model_dump(mode="json")),
+                        snapshot.timestamp,
+                    ),
+                )
+                conn.commit()
+                return True
+            else:
+                cursor.execute(
+                    """
+                    INSERT OR IGNORE INTO baselines (server_id, catalog_fingerprint, snapshot_json, created_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        snapshot.server_id,
+                        snapshot.catalog_fingerprint,
+                        canonical_json(snapshot.model_dump(mode="json")),
+                        snapshot.timestamp,
+                    ),
+                )
+                conn.commit()
+                return cursor.rowcount > 0
 
     def get_baseline(self, server_id: str) -> Optional[ServerSnapshot]:
         """Retrieve baseline snapshot for server_id if it exists."""
