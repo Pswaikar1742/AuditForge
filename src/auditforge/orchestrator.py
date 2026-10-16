@@ -104,6 +104,11 @@ class ScanOrchestrator:
         target_path = Path(target) if target else None
         snapshot: Optional[ServerSnapshot] = None
         resolved_source_path: Optional[str] = source_path
+        if not resolved_source_path and target_path:
+            if target_path.is_file() and target_path.suffix == ".py":
+                resolved_source_path = str(target_path)
+            elif target_path.is_dir() and (target_path / "server.py").exists():
+                resolved_source_path = str(target_path / "server.py")
         all_findings: List[Finding] = []
         all_evidence: List[EvidenceRecord] = []
         probe_outcomes: List[ProbeOutcome] = []
@@ -271,7 +276,7 @@ class ScanOrchestrator:
             baseline = self.db.get_baseline(sid)
             if baseline:
                 diff = diff_catalogs(baseline, snapshot)
-                stage_coverage["baseline_pinning"] = "PASS"
+                stage_coverage["baseline_pinning"] = "PASS" if diff.is_identical else diff.drift_category.value
             else:
                 stage_coverage["baseline_pinning"] = "NOT_PINNED"
         else:

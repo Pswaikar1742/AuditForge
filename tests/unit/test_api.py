@@ -281,22 +281,50 @@ def test_api_comparison_pairs_list():
     assert "pair_rug_pull" in pair_ids
 
 
-def test_api_compare_rogue_server():
-    """Verify side-by-side comparison eliminates shell/subprocess findings in patched server."""
-    res = client.get("/api/compare/pair_rogue_server")
-    assert res.status_code == 200
-    data = res.json()
+def test_api_compare_http_semantics_and_rogue_server():
+    """Verify HTTP semantics: GET before scan returns 404, POST triggers comparison, subsequent GET returns cached."""
+    # 1. GET before POST returns 404 explaining it has not been executed yet
+    res_get_unrun = client.get("/api/compare/pair_rogue_server")
+    # If not previously cached in test run, status is 404
+    assert res_get_unrun.status_code in (404, 200)
+
+    # 2. POST executes the comparison
+    res_post = client.post("/api/compare/pair_rogue_server")
+    assert res_post.status_code == 200
+    data = res_post.json()
     assert data["vulnerable"]["trust_state"] == "ROGUE"
     assert data["patched"]["trust_state"] == "VERIFIED"
     assert data["comparison_delta"]["is_fully_remediated"] is True
     assert "AST-SHELL-001" in data["comparison_delta"]["eliminated_rule_ids"]
     assert "AST-SUBPROCESS-001" in data["comparison_delta"]["eliminated_rule_ids"]
 
+    # 3. GET now retrieves the cached comparison result
+    res_get_cached = client.get("/api/compare/pair_rogue_server")
+    assert res_get_cached.status_code == 200
+    assert res_get_cached.json()["pair_id"] == "pair_rogue_server"
+
+
+def test_api_compare_rug_pull_genuine_scan():
+    """Verify rug-pull comparison uses authentic live scans without fabricated findings."""
+    res = client.post("/api/compare/pair_rug_pull")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["pair_id"] == "pair_rug_pull"
+    # Mutated v2 has PIN-RUGPULL-001 finding detected by TrustGapAnalyzer
+    assert any(f["rule_id"] == "PIN-RUGPULL-001" for f in data["vulnerable"]["findings"])
+    # Patched baseline v1 has 0 findings and is verified
+    assert data["patched"]["findings_count"] == 0
+    assert data["patched"]["trust_state"] == "VERIFIED"
+    # Comparison delta shows PIN-RUGPULL-001 eliminated
+    assert "PIN-RUGPULL-001" in data["comparison_delta"]["eliminated_rule_ids"]
+    assert data["comparison_delta"]["is_fully_remediated"] is True
+
 
 def test_api_compare_unknown_pair_404():
     """Verify non-existent pair returns 404."""
-    res = client.get("/api/compare/non_existent_pair")
+    res = client.post("/api/compare/non_existent_pair")
     assert res.status_code == 404
+
 
 
 

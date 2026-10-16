@@ -127,7 +127,7 @@ class ServerSnapshot(BaseModel):
     prompts_fingerprint: str = Field(default="", description="Prompts catalog SHA-256 hash")
     catalog_fingerprint_v1: str = Field(default="", description="Tool-only fingerprint (v1 backwards compatible)")
     catalog_fingerprint_v2: str = Field(default="", description="Composite surface fingerprint (tools+resources+prompts)")
-    fingerprint_version: str = Field(default="v2", description="Catalog fingerprint version (v1 or v2)")
+    fingerprint_version: str = Field(default="v1", description="Catalog fingerprint version (v1 or v2)")
     catalog_fingerprint: str = Field(default="", description="Combined catalog SHA-256 hash")
 
     def model_post_init(self, __context: Any) -> None:

@@ -14,7 +14,7 @@ const AUDIT_STAGES = [
   { id: 4, key: 'dynamic_probing', name: 'Dynamic Sandbox Probing', desc: 'Docker isolation, Python audit hooks & telemetry' },
   { id: 5, key: 'trust_gap', name: 'Trust Gap Reconciliation', desc: 'Contract vs observed behavior (ANN rules)' },
   { id: 6, key: 'baseline_pinning', name: 'Supply Chain Pinning & Diff', desc: 'Canonical SHA-256 fingerprinting & rug-pull check' },
-  { id: 7, key: 'evidence_sealing', name: 'Evidence Capsule Sealing', desc: 'SQLite WAL storage & exportable JSON/Markdown reports' },
+  { id: 7, key: 'evidence_sealing', name: 'Evidence Integrity Digest', desc: 'SQLite WAL storage & SHA-256 evidence integrity checksum' },
 ];
 
 export default function App() {
@@ -148,7 +148,9 @@ export default function App() {
     setLoadingComparison(true);
     setStatusMsg(`Executing side-by-side verification on '${targetPair}'...`);
     try {
-      const res = await fetch(`${API_BASE}/api/compare/${targetPair}`);
+      const res = await fetch(`${API_BASE}/api/compare/${targetPair}`, {
+        method: 'POST',
+      });
       if (res.ok) {
         const data = await res.json();
         setPairComparisonResult(data);
@@ -1682,7 +1684,7 @@ export default function App() {
                   <Lock size={15} color="#34D399" />
                   <div>
                     <div style={{ fontSize: '0.65rem', color: '#94A3B8', textTransform: 'uppercase', fontWeight: '700' }}>
-                      Cryptographic Evidence Manifest Seal (SHA-256)
+                      Evidence Integrity Checksum (SHA-256 Digest)
                     </div>
                     <div style={{ fontSize: '0.75rem', fontFamily: 'var(--font-mono)', color: '#34D399', fontWeight: '700' }}>
                       {selectedScan.evidence_manifest_hash}

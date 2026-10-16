@@ -7,6 +7,7 @@ static AST findings, guest telemetry events, and baseline drift.
 from typing import Dict, List, Optional, Tuple
 from auditforge.core.contracts import (
     CatalogDiff,
+    DriftCategory,
     EvidenceRecord,
     Finding,
     ProbeOutcome,
@@ -159,14 +160,17 @@ class TrustGapAnalyzer:
                 )
                 gap_evidence.append(ev)
 
+                drift_cat = getattr(diff, "drift_category", DriftCategory.CHANGED_REVIEW)
+                sev = Severity.CRITICAL if drift_cat == DriftCategory.HIGH_RISK_DRIFT else Severity.HIGH
                 fnd = Finding(
                     id=generate_finding_id("RUG-PULL-DRIFT"),
                     rule_id="PIN-RUGPULL-001",
-                    severity=Severity.HIGH,
+                    severity=sev,
                     evidence_ids=[ev_id],
                     reason=(
-                        f"Post-approval catalog mutation detected: {len(diff.added_tools)} added tool(s), "
-                        f"{len(diff.modified_tools)} modified tool(s) since baseline approval."
+                        f"Post-approval catalog mutation detected ({drift_cat.value}): "
+                        f"{len(diff.added_tools)} added tool(s), {len(diff.modified_tools)} modified tool(s) "
+                        f"since verified baseline approval."
                     ),
                     confidence=1.0,
                     remediation="Re-evaluate and re-approve the mutated MCP server catalog.",

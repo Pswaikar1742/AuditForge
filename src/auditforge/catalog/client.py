@@ -134,6 +134,7 @@ class MCPCatalogClient:
             resources_fingerprint=res_fp,
             prompts_fingerprint=prompts_fp,
             catalog_fingerprint=tools_fp,
+            fingerprint_version="v2",
         )
 
     async def call_tool(self, name: str, arguments: dict):
@@ -149,6 +150,10 @@ class MCPCatalogClient:
     def load_from_file(cls, file_path: str, server_id: Optional[str] = None) -> ServerSnapshot:
         """Load catalog snapshot from a JSON file (used for fixtures and testing)."""
         path = Path(file_path)
+        if path.is_dir():
+            cat_candidate = path / "catalog.json"
+            if cat_candidate.exists():
+                path = cat_candidate
         if not path.exists():
             raise MCPConnectionError(f"Catalog file not found: {file_path}")
 
@@ -180,6 +185,8 @@ class MCPCatalogClient:
         res_fp = hashlib.sha256(canonical_json(resources_dict).encode("utf-8")).hexdigest()
         prompts_fp = hashlib.sha256(canonical_json(prompts_dict).encode("utf-8")).hexdigest()
 
+        fp_version = data.get("fingerprint_version", "v2" if ("resources" in data or "prompts" in data) else "v1")
+
         return ServerSnapshot(
             server_id=sid,
             tools=tools_dict,
@@ -190,4 +197,5 @@ class MCPCatalogClient:
             resources_fingerprint=res_fp,
             prompts_fingerprint=prompts_fp,
             catalog_fingerprint=tools_fp,
+            fingerprint_version=fp_version,
         )

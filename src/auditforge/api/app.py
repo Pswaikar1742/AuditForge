@@ -599,7 +599,29 @@ def list_comparison_pairs() -> List[Dict[str, Any]]:
     return COMPARISON_PAIRS_META
 
 
+COMPARISON_RESULTS_CACHE: Dict[str, Dict[str, Any]] = {}
+
+
 @app.get("/api/compare/{pair_id}")
+def get_pair_comparison(pair_id: str) -> Dict[str, Any]:
+    """Retrieve previously executed side-by-side comparison result.
+
+    Adheres to REST semantics: GET retrieves existing results without triggering heavy scans.
+    Use POST /api/compare/{pair_id} to trigger or re-run the comparison scans.
+    """
+    pair = next((p for p in COMPARISON_PAIRS_META if p["id"] == pair_id), None)
+    if not pair:
+        raise HTTPException(status_code=404, detail=f"Comparison pair '{pair_id}' not found")
+
+    cached = COMPARISON_RESULTS_CACHE.get(pair_id)
+    if not cached:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Comparison for pair '{pair_id}' has not been executed yet. Run POST /api/compare/{pair_id} to perform the scan.",
+        )
+    return cached
+
+
 @app.post("/api/compare/{pair_id}")
 def compare_pair(pair_id: str) -> Dict[str, Any]:
     """Execute side-by-side verification on a vulnerable target and its remediated counterpart."""
@@ -611,22 +633,47 @@ def compare_pair(pair_id: str) -> Dict[str, Any]:
 
     if pair_id == "pair_rug_pull":
         server_py = Path("fixtures/rug_pull/server.py").resolve()
+        if not server_py.exists():
+            raise HTTPException(status_code=404, detail="fixtures/rug_pull/server.py not found")
+
         cmd1 = [sys.executable, str(server_py), "--version", "1"]
         cmd2 = [sys.executable, str(server_py), "--version", "2"]
+
+        # 1. Discover baseline v1 and mutated v2 via authentic live stdio
         client1 = MCPCatalogClient(cmd1, server_id="rug_pull")
         baseline = asyncio.run(client1.discover_live())
+
         client2 = MCPCatalogClient(cmd2, server_id="rug_pull")
         mutated = asyncio.run(client2.discover_live())
+
         diff_res = diff_catalogs(baseline, mutated)
 
-        vuln_scan = orch.run_scan(
-            target=str(Path("fixtures/rug_pull").resolve()),
+        # 2. Pin approved baseline in DB
+        orch.db.save_baseline(baseline, overwrite=True)
+
+        # 3. Execute genuine scan on the approved baseline (v1)
+        patched_scan = orch.run_scan(
+            target=str(server_py),
+            server_command=cmd1,
             server_id="rug_pull",
             use_llm=False,
             use_docker=False,
         )
 
-        return {
+        # 4. Execute genuine scan on the mutated server (v2) which diffs against baseline
+        vuln_scan = orch.run_scan(
+            target=str(server_py),
+            server_command=cmd2,
+            server_id="rug_pull",
+            use_llm=False,
+            use_docker=False,
+        )
+
+        vuln_rules = {f.rule_id for f in vuln_scan.findings}
+        patched_rules = {f.rule_id for f in patched_scan.findings}
+        eliminated_rules = sorted(list(vuln_rules - patched_rules))
+
+        result = {
             "pair_id": pair["id"],
             "title": pair["title"],
             "description": pair["description"],
@@ -635,38 +682,35 @@ def compare_pair(pair_id: str) -> Dict[str, Any]:
             "vulnerable": {
                 "target_id": "rug_pull_v2",
                 "server_name": "rug_pull (v2 Mutated)",
-                "trust_state": TrustState.ROGUE.value,
-                "findings_count": 1 + len(vuln_scan.findings),
-                "findings": [
-                    {
-                        "rule_id": "PIN-RUGPULL-001",
-                        "severity": "CRITICAL",
-                        "reason": f"Post-approval catalog drift: Added tools {diff_res.added_tools} without re-approval.",
-                        "confidence": 1.0,
-                        "remediation": "Pin verified baseline and reject unauthorized capability mutations.",
-                    }
-                ] + [f.model_dump() for f in vuln_scan.findings],
-                "stage_coverage": {**vuln_scan.stage_coverage, "baseline_pinning": "HIGH_RISK_DRIFT"},
+                "trust_state": vuln_scan.trust_state.value if hasattr(vuln_scan.trust_state, "value") else str(vuln_scan.trust_state),
+                "findings_count": len(vuln_scan.findings),
+                "findings": [f.model_dump() for f in vuln_scan.findings],
+                "stage_coverage": vuln_scan.stage_coverage,
                 "evidence_manifest_hash": vuln_scan.evidence_manifest_hash,
-                "fingerprint": mutated.catalog_fingerprint,
+                "fingerprint": vuln_scan.snapshot.catalog_fingerprint if vuln_scan.snapshot else mutated.catalog_fingerprint,
             },
             "patched": {
                 "target_id": "rug_pull_v1",
                 "server_name": "rug_pull (v1 Approved Baseline)",
-                "trust_state": TrustState.VERIFIED.value,
-                "findings_count": 0,
-                "findings": [],
-                "stage_coverage": {"catalog_discovery": "PASS", "baseline_pinning": "PASS", "evidence_sealing": "SEALED"},
-                "evidence_manifest_hash": vuln_scan.evidence_manifest_hash,
-                "fingerprint": baseline.catalog_fingerprint,
+                "trust_state": patched_scan.trust_state.value if hasattr(patched_scan.trust_state, "value") else str(patched_scan.trust_state),
+                "findings_count": len(patched_scan.findings),
+                "findings": [f.model_dump() for f in patched_scan.findings],
+                "stage_coverage": patched_scan.stage_coverage,
+                "evidence_manifest_hash": patched_scan.evidence_manifest_hash,
+                "fingerprint": patched_scan.snapshot.catalog_fingerprint if patched_scan.snapshot else baseline.catalog_fingerprint,
             },
             "comparison_delta": {
-                "eliminated_findings_count": 1 + len(vuln_scan.findings),
-                "eliminated_rule_ids": ["PIN-RUGPULL-001"] + [f.rule_id for f in vuln_scan.findings],
-                "is_fully_remediated": True,
+                "eliminated_findings_count": len(eliminated_rules),
+                "eliminated_rule_ids": eliminated_rules,
+                "is_fully_remediated": (
+                    (patched_scan.trust_state == TrustState.VERIFIED or str(patched_scan.trust_state) == "VERIFIED")
+                    and len(patched_scan.findings) == 0
+                ),
                 "diff": diff_res.model_dump(),
             },
         }
+        COMPARISON_RESULTS_CACHE[pair_id] = result
+        return result
 
     vuln_path = REGISTERED_FIXTURE_IDS.get(pair["vulnerable_target_id"])
     patched_path = REGISTERED_FIXTURE_IDS.get(pair["patched_target_id"])
@@ -691,7 +735,7 @@ def compare_pair(pair_id: str) -> Dict[str, Any]:
     patched_rules = {f.rule_id for f in patched_scan.findings}
     eliminated_rules = sorted(list(vuln_rules - patched_rules))
 
-    return {
+    result = {
         "pair_id": pair["id"],
         "title": pair["title"],
         "description": pair["description"],
@@ -724,6 +768,8 @@ def compare_pair(pair_id: str) -> Dict[str, Any]:
             ),
         },
     }
+    COMPARISON_RESULTS_CACHE[pair_id] = result
+    return result
 
 
 # ── Sponsor KOALA Model Assurance Endpoints ───────────────────────
