@@ -40,10 +40,16 @@ class ScanOrchestrator:
     def __init__(
         self,
         db_path: Optional[str] = None,
+        db: Optional[Database] = None,
         use_docker: bool = True,
         use_llm: bool = True,
     ):
-        self.db = Database(db_path or config.DB_PATH)
+        if db is not None:
+            self.db = db
+            self.db_path = db.db_path
+        else:
+            self.db_path = db_path or config.DB_PATH
+            self.db = Database(self.db_path)
         self.use_docker = use_docker
         self.use_llm = use_llm
 

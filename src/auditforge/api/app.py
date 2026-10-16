@@ -3,9 +3,12 @@
 REST API for MCP Security Auditing, Evidence Capsules, and Catalog Pinning.
 """
 
+import asyncio
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-from fastapi import FastAPI, HTTPException
+import sys
+from typing import Any, Dict, List, Optional, Tuple
+
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -14,6 +17,7 @@ from auditforge.core.contracts import CatalogDiff, ScanResult, ServerSnapshot
 from auditforge.catalog.client import MCPCatalogClient
 from auditforge.catalog.pinning import diff_catalogs
 from auditforge.orchestrator import ScanOrchestrator
+from auditforge.reports.markdown import generate_markdown_report
 from auditforge.storage.database import Database
 
 app = FastAPI(
@@ -22,12 +26,19 @@ app = FastAPI(
     description="REST API for MCP Security Auditing, Evidence Capsules, and Catalog Pinning",
 )
 
-# Enable CORS for local Vite dashboard (port 3000, 5173, localhost, 127.0.0.1)
+# Restrict CORS strictly to local development origins
+ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -50,7 +61,7 @@ def set_db(new_db: Database) -> None:
 def get_orchestrator() -> ScanOrchestrator:
     global _orchestrator_instance
     if _orchestrator_instance is None:
-        _orchestrator_instance = ScanOrchestrator(db_path=config.DB_PATH)
+        _orchestrator_instance = ScanOrchestrator(db=get_db())
     return _orchestrator_instance
 
 
@@ -70,27 +81,51 @@ FIXTURES_META = [
     },
     {
         "id": "rogue_server",
-        "name": "Fixture B: Rogue Server",
+        "name": "Fixture B: Rogue Server (Vulnerable)",
         "role": "Positive Control",
-        "expected": "SAST-001 Shell Execution (TrustState: ROGUE)",
+        "expected": "AST-SHELL-001 Shell Execution & AST-SUBPROCESS-001 (TrustState: ROGUE)",
         "tags": ["Command Injection", "os.system", "Subprocess"],
         "path": "fixtures/rogue_server",
     },
     {
+        "id": "rogue_server_patched",
+        "name": "Fixture B (Patched): Safe Diagnostic",
+        "role": "Remediated Control",
+        "expected": "0 Vulnerabilities (TrustState: VERIFIED, No Subprocess/Shell)",
+        "tags": ["Remediated", "In-Memory Diagnostic", "Safe"],
+        "path": "fixtures/rogue_server_patched",
+    },
+    {
         "id": "poisoned_description",
-        "name": "Fixture C: Poisoned Description",
+        "name": "Fixture C: Poisoned Description (Vulnerable)",
         "role": "Prompt Injection Control",
-        "expected": "DESC-003 Directive & DESC-004 Credential Theft",
+        "expected": "DESC-INJECT-001 Directive & DESC-EXFIL-001 Credential Theft (TrustState: ROGUE)",
         "tags": ["Prompt Injection", "Secret Exfiltration", "Adversarial NLP"],
         "path": "fixtures/poisoned_description",
     },
     {
+        "id": "poisoned_description_patched",
+        "name": "Fixture C (Patched): Clean Metadata",
+        "role": "Remediated Control",
+        "expected": "0 Vulnerabilities (TrustState: VERIFIED, No Injection)",
+        "tags": ["Remediated", "Clean Description", "Safe"],
+        "path": "fixtures/poisoned_description_patched",
+    },
+    {
         "id": "lying_annotations",
-        "name": "Fixture D: Lying Annotations (Core USP)",
+        "name": "Fixture D: Lying Annotations (Vulnerable)",
         "role": "Trust Gap Demonstration",
-        "expected": "ANN-001 Contract-to-Behavior Trust Gap Violation",
+        "expected": "TRUST-GAP-001 Contract-to-Behavior Trust Gap Violation (TrustState: TRUST_GAP)",
         "tags": ["Trust Gap USP", "readOnlyHint Violation", "Static & Dynamic"],
         "path": "fixtures/lying_annotations",
+    },
+    {
+        "id": "lying_annotations_patched",
+        "name": "Fixture D (Patched): Genuine Read-Only",
+        "role": "Remediated Control",
+        "expected": "0 Vulnerabilities (TrustState: VERIFIED, No Deletion)",
+        "tags": ["Remediated", "Genuine Read-Only", "Safe"],
+        "path": "fixtures/lying_annotations_patched",
     },
     {
         "id": "rug_pull",
@@ -113,7 +148,8 @@ class HealthResponse(BaseModel):
 
 
 class ScanRequest(BaseModel):
-    server_path: str
+    target_id: Optional[str] = None
+    server_path: Optional[str] = None
     server_name: Optional[str] = None
     use_llm: bool = False
 
@@ -127,30 +163,33 @@ def _format_scan_dict(res: ScanResult) -> Dict[str, Any]:
     return data
 
 
-def _validate_safe_target(target: str) -> str:
-    """Validate target string to prevent arbitrary host path traversal."""
-    target_clean = target.strip()
-    # Check if target is a registered fixture ID
-    if target_clean in REGISTERED_FIXTURE_IDS:
-        return REGISTERED_FIXTURE_IDS[target_clean]
-
-    # Resolve path and verify it stays inside project workspace
-    path = Path(target_clean).resolve()
-    base_dir = Path.cwd().resolve()
-    try:
-        path.relative_to(base_dir)
-    except ValueError:
+def _validate_safe_target(server_path: Optional[str], target_id: Optional[str] = None) -> Tuple[str, str]:
+    """Validate target ID or path to enforce strict allowlisting against arbitrary execution."""
+    raw = (target_id or server_path or "").strip()
+    if not raw:
         raise HTTPException(
             status_code=400,
-            detail=f"Target path '{target_clean}' is outside allowable project directory.",
+            detail="Missing required target identifier ('target_id' or 'server_path').",
         )
 
-    if not path.exists():
-        raise HTTPException(
-            status_code=404,
-            detail=f"Target path '{target_clean}' not found.",
-        )
-    return str(path)
+    # 1. Exact match against registered target ID
+    if raw in REGISTERED_FIXTURE_IDS:
+        return REGISTERED_FIXTURE_IDS[raw], raw
+
+    # 2. Path provided: verify it strictly matches an authorized fixture relative path
+    cleaned = raw.rstrip("/")
+    for fid, fpath in REGISTERED_FIXTURE_IDS.items():
+        if cleaned == fpath or cleaned == str(Path(fpath).resolve()):
+            return fpath, fid
+
+    # Reject unauthorized targets, absolute paths, and path traversal
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            f"Unauthorized target '{raw}'. Only registered target IDs are permitted. "
+            f"Authorized targets: {sorted(list(REGISTERED_FIXTURE_IDS.keys()))}"
+        ),
+    )
 
 
 # ── Health & Diagnostics ──────────────────────────────────────────
@@ -160,7 +199,7 @@ def get_health() -> HealthResponse:
     """Return system readiness and service configuration."""
     return HealthResponse(
         status="OK",
-        database=config.DB_PATH,
+        database=get_db().db_path,
         ollama_host=config.OLLAMA_HOST,
         docker_image=config.DOCKER_IMAGE,
     )
@@ -200,20 +239,37 @@ def get_scan(scan_id: str) -> Dict[str, Any]:
     return _format_scan_dict(res)
 
 
+@app.get("/scans/{scan_id}/report")
+@app.get("/api/scans/{scan_id}/report")
+def export_scan_report(scan_id: str, format: str = "json") -> Response:
+    """Export the verified scan report as structured JSON or human-readable Markdown."""
+    res = get_db().get_scan_result(scan_id)
+    if not res:
+        raise HTTPException(status_code=404, detail=f"Scan ID '{scan_id}' not found")
+
+    fmt = format.lower().strip()
+    if fmt == "json":
+        return Response(content=res.model_dump_json(indent=2), media_type="application/json")
+    elif fmt in {"markdown", "md"}:
+        md_text = generate_markdown_report(res)
+        return Response(content=md_text, media_type="text/markdown")
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported format '{format}'. Use 'json' or 'markdown'.")
+
+
 @app.post("/scan")
 @app.post("/api/scan")
 def trigger_scan(req: ScanRequest) -> Dict[str, Any]:
-    """Trigger a security audit scan on a registered fixture or safe project path."""
-    safe_path = _validate_safe_target(req.server_path)
+    """Trigger a security audit scan on an authorized registered target ID."""
+    safe_path, target_name = _validate_safe_target(req.server_path, req.target_id)
+    orch = get_orchestrator()
+    orch.use_llm = req.use_llm
+
     try:
-        orch = get_orchestrator()
-        if req.use_llm != orch.use_llm:
-            orch = ScanOrchestrator(db_path=orch.db_path, use_docker=orch.use_docker, use_llm=req.use_llm)
-        res = orch.run_scan(target=safe_path, server_id=req.server_name)
+        res = orch.run_scan(target=safe_path, server_id=req.server_name or target_name)
         return _format_scan_dict(res)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Audit scan failed: {str(e)}")
-
 
 
 # ── Baselines API ─────────────────────────────────────────────────
@@ -274,8 +330,11 @@ class PinRequest(BaseModel):
 @app.post("/api/pin")
 def pin_catalog_endpoint(req: PinRequest) -> Dict[str, Any]:
     """Pin a catalog snapshot as an approved baseline."""
-    safe_path = _validate_safe_target(req.catalog_path)
-    snapshot = MCPCatalogClient.load_from_file(safe_path, server_id=req.server_id)
+    safe_path, _ = _validate_safe_target(req.catalog_path, req.server_id)
+    cat_file = Path(safe_path)
+    if cat_file.is_dir():
+        cat_file = cat_file / "catalog.json"
+    snapshot = MCPCatalogClient.load_from_file(str(cat_file), server_id=req.server_id)
     get_db().save_baseline(snapshot)
     return {
         "status": "PINNED",
@@ -297,8 +356,45 @@ def diff_catalogs_endpoint(req: DiffRequest) -> Dict[str, Any]:
     baseline = get_db().get_baseline(req.server_id)
     if not baseline:
         raise HTTPException(status_code=404, detail=f"No baseline pinned for '{req.server_id}'")
-    safe_path = _validate_safe_target(req.catalog_path)
-    current = MCPCatalogClient.load_from_file(safe_path, server_id=req.server_id)
+    safe_path, _ = _validate_safe_target(req.catalog_path, req.server_id)
+    cat_file = Path(safe_path)
+    if cat_file.is_dir():
+        cat_file = cat_file / "catalog.json"
+    current = MCPCatalogClient.load_from_file(str(cat_file), server_id=req.server_id)
     diff_res = diff_catalogs(baseline, current)
     return diff_res.model_dump()
 
+
+# ── Live Rug-Pull Demo Endpoint ───────────────────────────────────
+@app.post("/demo/rug-pull")
+@app.post("/api/demo/rug-pull")
+def live_rug_pull_demo() -> Dict[str, Any]:
+    """Execute authentic live stdio rug-pull comparison between version 1 and version 2."""
+    server_py = Path("fixtures/rug_pull/server.py").resolve()
+    if not server_py.exists():
+        raise HTTPException(status_code=404, detail="fixtures/rug_pull/server.py not found")
+
+    cmd1 = [sys.executable, str(server_py), "--version", "1"]
+    cmd2 = [sys.executable, str(server_py), "--version", "2"]
+
+    client1 = MCPCatalogClient(cmd1, server_id="rug_pull")
+    baseline = asyncio.run(client1.discover_live())
+
+    client2 = MCPCatalogClient(cmd2, server_id="rug_pull")
+    mutated = asyncio.run(client2.discover_live())
+
+    diff_res = diff_catalogs(baseline, mutated)
+
+    return {
+        "status": "RUG_PULL_DETECTED" if not diff_res.is_identical else "IDENTICAL",
+        "server_id": "rug_pull",
+        "baseline_version": "1",
+        "baseline_fingerprint": baseline.catalog_fingerprint,
+        "mutated_version": "2",
+        "mutated_fingerprint": mutated.catalog_fingerprint,
+        "is_identical": diff_res.is_identical,
+        "added_tools": diff_res.added_tools,
+        "removed_tools": diff_res.removed_tools,
+        "modified_tools": diff_res.modified_tools,
+        "diff": diff_res.model_dump(),
+    }

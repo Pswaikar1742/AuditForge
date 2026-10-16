@@ -196,6 +196,29 @@ export default function App() {
     }
   };
 
+  const runLiveRugPullDemo = async () => {
+    setLoading(true);
+    setStatusMsg("Executing live stdio rug-pull test (MCP server v1 vs v2 over protocol)...");
+    try {
+      const res = await fetch(`${API_BASE}/api/demo/rug-pull`, {
+        method: 'POST',
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setDiffResult(data.diff || data);
+        setStatusMsg("✔ Live Rug-Pull Detected: Version 2 mutated tool definitions over stdio transport.");
+      } else {
+        const err = await res.json();
+        setStatusMsg(`Live Rug-Pull demo failed: ${err.detail || 'Unknown error'}`);
+      }
+    } catch (e) {
+      setStatusMsg(`Demo error: ${e.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+
   // Helper styles for trust state badge
   const renderTrustBadge = (state) => {
     switch (state) {
@@ -427,11 +450,14 @@ export default function App() {
                   Quick Scenarios:
                 </span>
                 {[
-                  { id: 'lying_annotations', label: '1. Lying Annotations (Trust Gap USP)', path: 'fixtures/lying_annotations' },
-                  { id: 'rogue_server', label: '2. Rogue Server (Shell Exec)', path: 'fixtures/rogue_server' },
-                  { id: 'poisoned_description', label: '3. Poisoned Description (Prompt Injection)', path: 'fixtures/poisoned_description' },
-                  { id: 'clean_reader', label: '4. Clean Reader (Safe Baseline)', path: 'fixtures/clean_reader' },
-                  { id: 'rug_pull', label: '5. Rug Pull (Supply Chain Drift)', path: 'fixtures/rug_pull/catalog_v2.json' },
+                  { id: 'clean_reader', label: '1. Clean Reader (Safe Baseline)', path: 'clean_reader' },
+                  { id: 'rogue_server', label: '2. Rogue Server (Vulnerable)', path: 'rogue_server' },
+                  { id: 'rogue_server_patched', label: '2b. Rogue (Patched)', path: 'rogue_server_patched' },
+                  { id: 'poisoned_description', label: '3. Poisoned Description (Vulnerable)', path: 'poisoned_description' },
+                  { id: 'poisoned_description_patched', label: '3b. Poisoned (Patched)', path: 'poisoned_description_patched' },
+                  { id: 'lying_annotations', label: '4. Lying Annotations (Vulnerable)', path: 'lying_annotations' },
+                  { id: 'lying_annotations_patched', label: '4b. Lying (Patched)', path: 'lying_annotations_patched' },
+                  { id: 'rug_pull', label: '5. Rug Pull Target', path: 'rug_pull' },
                 ].map(preset => (
                   <button
                     key={preset.id}
@@ -462,7 +488,7 @@ export default function App() {
                   <Search size={16} color="var(--text-muted)" style={{ marginRight: '0.5rem' }} />
                   <input
                     type="text"
-                    placeholder="Enter MCP server directory or catalog path (e.g. fixtures/lying_annotations)"
+                    placeholder="Enter MCP target ID (e.g. clean_reader, rogue_server, lying_annotations)"
                     value={customPath}
                     onChange={(e) => {
                       setCustomPath(e.target.value);
@@ -498,6 +524,17 @@ export default function App() {
                 >
                   {loading ? <RefreshCw size={16} className="spin" /> : <Zap size={16} />}
                   RUN AUDIT
+                </button>
+
+                {/* Live Stdio Rug-Pull Button */}
+                <button
+                  onClick={runLiveRugPullDemo}
+                  disabled={loading}
+                  className="btn btn-secondary"
+                  style={{ padding: '0.75rem 1.25rem', fontSize: '0.85rem', borderColor: 'rgba(236, 72, 153, 0.4)', color: '#F472B6' }}
+                  title="Execute authentic live stdio rug-pull test querying real server v1 vs v2"
+                >
+                  <Radio size={15} /> Live Stdio Rug-Pull
                 </button>
 
                 {/* Pin Baseline Button */}

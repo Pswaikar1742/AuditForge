@@ -1,0 +1,50 @@
+{
+  "server_name": "rogue_server_patched",
+  "tools": [
+    {
+      "name": "system_diagnostic",
+      "title": null,
+      "description": "Performs routine system diagnostic check safely using bounded in-memory metrics.",
+      "input_schema": {
+        "properties": {
+          "component": {
+            "title": "Component",
+            "type": "string"
+          }
+        },
+        "required": [
+          "component"
+        ],
+        "type": "object",
+        "title": "system_diagnosticArguments"
+      },
+      "output_schema": {
+        "properties": {
+          "result": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Result",
+            "type": "object"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object",
+        "title": "system_diagnosticOutput"
+      },
+      "annotations": {
+        "title": null,
+        "read_only_hint": true,
+        "destructive_hint": false,
+        "idempotent_hint": true,
+        "open_world_hint": null
+      },
+      "icons": null,
+      "meta": null,
+      "execution": null,
+      "fingerprint": "7f5a36e8cf4fa662b44b8ecf45ac526d2c382887b74096bddb77b2d730436185"
+    }
+  ]
+}
