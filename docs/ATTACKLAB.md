@@ -184,3 +184,86 @@ supported ceiling. Diverse uses the same 8192-byte inspection bound with request
 10% intentionally exceed it. Repeated retains its original sizes and 131072-byte limit. Results are
 workload-specific; different size mixes prevent attributing every performance difference to diversity.
 No benchmark invokes a target process, Docker, network, semantic model, or RAG.
+
+## Phase 2 executed results
+
+Measured implementation: `d865165b4380f4fc842fba68900665bcae32fe1e` (all 19 processes recorded a clean tree). Local artifacts: `/home/psw/attacklab-phase2/`.
+
+Exact commands:
+
+```bash
+PYTHONPATH=src python -m pytest tests/unit/test_attacklab.py tests/unit/test_contracts.py tests/benchmarks/test_benchmark_targets.py > /home/psw/attacklab-phase2/tests.log 2>&1
+PYTHONPATH=src python -m benchmarks.attacklab.matrix --output /home/psw/attacklab-phase2/matrix > /home/psw/attacklab-phase2/matrix.log 2>&1
+python /home/psw/attacklab-phase2/summarize.py
+git diff --exit-code origin/main -- src dashboard tests/benchmarks
+```
+
+Every individual invocation is recorded verbatim as argv JSON in `matrix/commands.jsonl`; per-run raw stdout/stderr is in `matrix/<run>.log`. No datasets or full generated reports are committed.
+
+Actual local pytest output: `42 passed, 967 warnings in 5.90s` (pytest-asyncio deprecations). Matrix: 19/19 exit 0; cached/uncached totals, accuracy, technique/size results and exact cardinalities agree at every scale.
+
+| Workload | Cases | Cache | Runtime s | Submissions/s | RSS MiB | Mean ms | p50 ms | p95 ms | p99 ms | Detector calls |
+|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| repeated | 1000 | False | 0.236 | 4229.5 | 37.88 | 0.2177 | 0.0764 | 0.2129 | 7.1400 | 914 |
+| repeated | 1000 | True | 0.094 | 10674.2 | 37.83 | 0.0759 | 0.0460 | 0.1082 | 0.6299 | 27 |
+| repeated | 10000 | False | 3.039 | 3290.7 | 38.07 | 0.2838 | 0.0764 | 0.2151 | 8.7993 | 9132 |
+| repeated | 10000 | True | 0.806 | 12405.4 | 38.07 | 0.0618 | 0.0465 | 0.0645 | 0.6237 | 27 |
+| repeated | 100000 | False | 30.216 | 3309.5 | 38.05 | 0.2820 | 0.0772 | 0.2151 | 8.7993 | 91306 |
+| repeated | 100000 | True | 7.772 | 12866.1 | 38.08 | 0.0593 | 0.0451 | 0.0764 | 0.6237 | 27 |
+| diverse | 1000 | False | 0.487 | 2052.5 | 37.69 | 0.4143 | 0.1890 | 1.2392 | 1.3154 | 900 |
+| diverse | 1000 | True | 0.487 | 2053.2 | 39.14 | 0.4128 | 0.1928 | 1.2027 | 1.2895 | 900 |
+| diverse | 10000 | False | 4.712 | 2122.0 | 38.06 | 0.3984 | 0.1890 | 1.2148 | 1.3154 | 9000 |
+| diverse | 10000 | True | 4.714 | 2121.3 | 45.25 | 0.3986 | 0.1909 | 1.2027 | 1.3154 | 9000 |
+| diverse | 100000 | False | 47.746 | 2094.4 | 40.07 | 0.4039 | 0.1928 | 1.2148 | 1.3419 | 90000 |
+| diverse | 100000 | True | 47.916 | 2087.0 | 47.70 | 0.4046 | 0.1966 | 1.2148 | 1.3154 | 90000 |
+| maximum | 1000 | False | 1.135 | 880.7 | 37.42 | 1.0448 | 1.1444 | 1.3963 | 2.0584 | 1000 |
+| maximum | 1000 | True | 1.080 | 926.1 | 39.33 | 0.9950 | 1.1218 | 1.3024 | 1.3553 | 1000 |
+| maximum | 10000 | False | 10.657 | 938.3 | 38.00 | 0.9838 | 1.1218 | 1.2767 | 1.3154 | 10000 |
+| maximum | 10000 | True | 10.779 | 927.7 | 45.38 | 0.9943 | 1.1330 | 1.2895 | 1.3419 | 10000 |
+| maximum | 100000 | False | 107.722 | 928.3 | 39.78 | 0.9944 | 1.1330 | 1.3024 | 1.3419 | 100000 |
+| maximum | 100000 | True | 108.795 | 919.2 | 46.95 | 1.0027 | 1.1330 | 1.3024 | 1.3553 | 100000 |
+
+100K quality (identical with caching off/on):
+
+| Workload | Unique / evaluated | Duplicate ratio | TP | TN | FP | FN | Precision | Recall | F1 | FPR | FNR | Error rate | Unassessed rate |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| repeated | 29 / 27 | 0.99971 | 26087 | 52175 | 4348 | 8696 | 0.85714 | 0.74999 | 0.79999 | 0.07692 | 0.25001 | 0.08694 | 0.08694 |
+| diverse | 100000 / 90000 | 0.00000 | 30000 | 10000 | 10000 | 40000 | 0.75000 | 0.42857 | 0.54545 | 0.50000 | 0.57143 | 0.00000 | 0.10000 |
+| maximum | 100000 / 100000 | 0.00000 | 33333 | 11112 | 11111 | 44444 | 0.75000 | 0.42857 | 0.54545 | 0.49998 | 0.57143 | 0.00000 | 0.00000 |
+
+Held-out actual report excerpts:
+
+```json
+{
+  "totals": {
+    "submitted": 18,
+    "processed": 18,
+    "errors": 0,
+    "skipped": 0,
+    "samples": 14
+  },
+  "accuracy": {
+    "tp": 5,
+    "tn": 4,
+    "fp": 3,
+    "fn": 6,
+    "precision": 0.625,
+    "recall": 0.45454545454545453,
+    "false_positive_rate": 0.42857142857142855,
+    "false_negative_rate": 0.5454545454545454,
+    "f1": 0.5263157894736842
+  },
+  "diversity": {
+    "unique_payloads": 18,
+    "unique_evaluated_payloads": 18,
+    "hashable_submissions": 18,
+    "duplicate_ratio": 0.0,
+    "cardinality_method": "exact disk-backed SHA-256 membership; not an in-memory set",
+    "temporary_disk_bytes": 8192
+  }
+}
+```
+
+Repeated caching avoids detector calls; diverse and maximum have no hits and pay cache-management costs. Single-run timing differences are not statistically established speed regressions. All unique counts measure bytes, not independently sampled attack concepts. Input sizes, per-technique confusion matrices and detector-only timing are in each report. Peak RSS includes interpreter imports. Temporary unique-index disk usage is reported separately and grows with unique content. No confidence intervals or real-world detection claims are inferred.
+
+CI implementation revision: GitHub Actions Python 3.11 and 3.12 passed on push and PR (runs 38883211292 and 38883216562). Final documentation revision status is reported in the PR handoff.
