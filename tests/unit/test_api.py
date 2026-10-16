@@ -239,3 +239,65 @@ def test_api_server_identity_trust():
     # Identity is derived strictly from allowlisted target ID
     assert res.json()["server_name"] == "clean_reader"
 
+
+def test_api_concurrency_scan_model_settings():
+    """Verify concurrent scan requests with use_llm=True and use_llm=False do not corrupt each other's settings."""
+    import concurrent.futures
+
+    def do_scan(use_llm: bool):
+        res = client.post("/api/scan", json={
+            "target_id": "clean_reader",
+            "use_llm": use_llm,
+        })
+        return res, use_llm
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        futures = [executor.submit(do_scan, i % 2 == 0) for i in range(8)]
+        results = [f.result() for f in futures]
+
+    for res, used_llm in results:
+        assert res.status_code == 200
+        data = res.json()
+        if used_llm:
+            # LLM was requested: without local Ollama running, stage is ERROR -> trust_state UNKNOWN
+            assert data["stage_coverage"]["description_intelligence"] in {"ERROR", "PASS"}
+            assert data["trust_state"] in {"UNKNOWN", "VERIFIED"}
+        else:
+            # LLM was disabled: deterministic heuristic stage passed without LLM error
+            assert data["stage_coverage"]["description_intelligence"] in {"PASS", "HEURISTIC_ONLY"}
+            assert data["trust_state"] == "VERIFIED"
+
+
+def test_api_comparison_pairs_list():
+    """Verify listing all vulnerable vs patched comparison pairs."""
+    res = client.get("/api/pairs")
+    assert res.status_code == 200
+    pairs = res.json()
+    assert len(pairs) >= 4
+    pair_ids = {p["id"] for p in pairs}
+    assert "pair_rogue_server" in pair_ids
+    assert "pair_poisoned_description" in pair_ids
+    assert "pair_lying_annotations" in pair_ids
+    assert "pair_rug_pull" in pair_ids
+
+
+def test_api_compare_rogue_server():
+    """Verify side-by-side comparison eliminates shell/subprocess findings in patched server."""
+    res = client.get("/api/compare/pair_rogue_server")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["vulnerable"]["trust_state"] == "ROGUE"
+    assert data["patched"]["trust_state"] == "VERIFIED"
+    assert data["comparison_delta"]["is_fully_remediated"] is True
+    assert "AST-SHELL-001" in data["comparison_delta"]["eliminated_rule_ids"]
+    assert "AST-SUBPROCESS-001" in data["comparison_delta"]["eliminated_rule_ids"]
+
+
+def test_api_compare_unknown_pair_404():
+    """Verify non-existent pair returns 404."""
+    res = client.get("/api/compare/non_existent_pair")
+    assert res.status_code == 404
+
+
+
+

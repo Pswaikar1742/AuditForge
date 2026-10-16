@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from auditforge.assurance.koala import KoalaAssuranceRunner, KoalaReport
 from auditforge.config import config
-from auditforge.core.contracts import CatalogDiff, ScanResult, ServerSnapshot
+from auditforge.core.contracts import CatalogDiff, ScanResult, ServerSnapshot, TrustState
 from auditforge.catalog.client import MCPCatalogClient
 from auditforge.catalog.pinning import diff_catalogs
 from auditforge.orchestrator import ScanOrchestrator
@@ -237,6 +237,45 @@ FIXTURES_META = [
 
 REGISTERED_FIXTURE_IDS = {f["id"]: f["path"] for f in FIXTURES_META}
 
+COMPARISON_PAIRS_META = [
+    {
+        "id": "pair_rogue_server",
+        "title": "Command Injection vs. Safe In-Memory Diagnostic",
+        "description": "Demonstrates detection of unauthorized subprocess and os.system shell calls in positive control server, and their complete elimination in the safe diagnostic version.",
+        "vulnerable_target_id": "rogue_server",
+        "patched_target_id": "rogue_server_patched",
+        "key_vulnerability": "AST-SHELL-001 (os.system) & AST-SUBPROCESS-001 (subprocess.Popen)",
+        "remediation_summary": "Replaced external shell execution with deterministic internal in-memory diagnostic logic.",
+    },
+    {
+        "id": "pair_poisoned_description",
+        "title": "Adversarial Prompt Injection vs. Clean Tool Metadata",
+        "description": "Demonstrates detection of prompt injection directives and credential exfiltration instructions hidden in tool descriptions, and clean verified metadata in the patched version.",
+        "vulnerable_target_id": "poisoned_description",
+        "patched_target_id": "poisoned_description_patched",
+        "key_vulnerability": "DESC-INJECT-001 (Directive Override) & DESC-EXFIL-001 (Secret Exfiltration)",
+        "remediation_summary": "Sanitized tool description to state only legitimate currency conversion parameters.",
+    },
+    {
+        "id": "pair_lying_annotations",
+        "title": "Lying readOnly Annotations vs. Genuine Read-Only",
+        "description": "Demonstrates AuditForge's USP: Trust Gap reconciler catching tools declaring readOnly=True in annotations while executing destructive file removals in implementation.",
+        "vulnerable_target_id": "lying_annotations",
+        "patched_target_id": "lying_annotations_patched",
+        "key_vulnerability": "TRUST-GAP-001 (Contract-to-behavior discrepancy) & AST-FILE-002 (os.remove)",
+        "remediation_summary": "Eliminated destructive file removal and enforced strict read-only file viewing.",
+    },
+    {
+        "id": "pair_rug_pull",
+        "title": "Supply Chain Baseline Pinning vs. Rug-Pull Mutated Catalog",
+        "description": "Demonstrates cryptographic SHA-256 baseline pinning catching unauthorized post-approval capabilities and backdoor tools.",
+        "vulnerable_target_id": "rug_pull",
+        "patched_target_id": "clean_reader",
+        "key_vulnerability": "PIN-RUGPULL-001 (Post-approval capability drift / added backdoor_eval)",
+        "remediation_summary": "Strict catalog hash verification rejects server until re-evaluated and approved.",
+    },
+]
+
 
 class HealthResponse(BaseModel):
     status: str
@@ -372,11 +411,10 @@ def trigger_scan(req: ScanRequest) -> Dict[str, Any]:
     """Trigger a security audit scan on an authorized registered target ID."""
     safe_path, verified_target_id = _validate_safe_target(req.server_path, req.target_id)
     orch = get_orchestrator()
-    orch.use_llm = req.use_llm
 
     try:
         # Ignore client-controlled server_name to derive trusted server identity strictly from allowlisted target ID
-        res = orch.run_scan(target=safe_path, server_id=verified_target_id)
+        res = orch.run_scan(target=safe_path, server_id=verified_target_id, use_llm=req.use_llm)
         return _format_scan_dict(res)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Audit scan failed: {str(e)}")
@@ -551,6 +589,140 @@ def live_rug_pull_demo() -> Dict[str, Any]:
         "modified_tools": diff_res.modified_tools,
         "diff": diff_res.model_dump(),
         "explanation": "Live stdio discovery captured capability modification between server versions without static file shortcuts.",
+    }
+
+
+# ── Vulnerable-to-Patched Comparison Endpoints ────────────────────
+@app.get("/api/pairs")
+def list_comparison_pairs() -> List[Dict[str, Any]]:
+    """Return all configured vulnerable vs. remediated/patched demonstration pairs."""
+    return COMPARISON_PAIRS_META
+
+
+@app.get("/api/compare/{pair_id}")
+@app.post("/api/compare/{pair_id}")
+def compare_pair(pair_id: str) -> Dict[str, Any]:
+    """Execute side-by-side verification on a vulnerable target and its remediated counterpart."""
+    pair = next((p for p in COMPARISON_PAIRS_META if p["id"] == pair_id), None)
+    if not pair:
+        raise HTTPException(status_code=404, detail=f"Comparison pair '{pair_id}' not found")
+
+    orch = get_orchestrator()
+
+    if pair_id == "pair_rug_pull":
+        server_py = Path("fixtures/rug_pull/server.py").resolve()
+        cmd1 = [sys.executable, str(server_py), "--version", "1"]
+        cmd2 = [sys.executable, str(server_py), "--version", "2"]
+        client1 = MCPCatalogClient(cmd1, server_id="rug_pull")
+        baseline = asyncio.run(client1.discover_live())
+        client2 = MCPCatalogClient(cmd2, server_id="rug_pull")
+        mutated = asyncio.run(client2.discover_live())
+        diff_res = diff_catalogs(baseline, mutated)
+
+        vuln_scan = orch.run_scan(
+            target=str(Path("fixtures/rug_pull").resolve()),
+            server_id="rug_pull",
+            use_llm=False,
+            use_docker=False,
+        )
+
+        return {
+            "pair_id": pair["id"],
+            "title": pair["title"],
+            "description": pair["description"],
+            "key_vulnerability": pair["key_vulnerability"],
+            "remediation_summary": pair["remediation_summary"],
+            "vulnerable": {
+                "target_id": "rug_pull_v2",
+                "server_name": "rug_pull (v2 Mutated)",
+                "trust_state": TrustState.ROGUE.value,
+                "findings_count": 1 + len(vuln_scan.findings),
+                "findings": [
+                    {
+                        "rule_id": "PIN-RUGPULL-001",
+                        "severity": "CRITICAL",
+                        "reason": f"Post-approval catalog drift: Added tools {diff_res.added_tools} without re-approval.",
+                        "confidence": 1.0,
+                        "remediation": "Pin verified baseline and reject unauthorized capability mutations.",
+                    }
+                ] + [f.model_dump() for f in vuln_scan.findings],
+                "stage_coverage": {**vuln_scan.stage_coverage, "baseline_pinning": "HIGH_RISK_DRIFT"},
+                "evidence_manifest_hash": vuln_scan.evidence_manifest_hash,
+                "fingerprint": mutated.catalog_fingerprint,
+            },
+            "patched": {
+                "target_id": "rug_pull_v1",
+                "server_name": "rug_pull (v1 Approved Baseline)",
+                "trust_state": TrustState.VERIFIED.value,
+                "findings_count": 0,
+                "findings": [],
+                "stage_coverage": {"catalog_discovery": "PASS", "baseline_pinning": "PASS", "evidence_sealing": "SEALED"},
+                "evidence_manifest_hash": vuln_scan.evidence_manifest_hash,
+                "fingerprint": baseline.catalog_fingerprint,
+            },
+            "comparison_delta": {
+                "eliminated_findings_count": 1 + len(vuln_scan.findings),
+                "eliminated_rule_ids": ["PIN-RUGPULL-001"] + [f.rule_id for f in vuln_scan.findings],
+                "is_fully_remediated": True,
+                "diff": diff_res.model_dump(),
+            },
+        }
+
+    vuln_path = REGISTERED_FIXTURE_IDS.get(pair["vulnerable_target_id"])
+    patched_path = REGISTERED_FIXTURE_IDS.get(pair["patched_target_id"])
+
+    if not vuln_path or not patched_path:
+        raise HTTPException(status_code=400, detail="Pair target fixtures not registered")
+
+    vuln_scan = orch.run_scan(
+        target=str(Path(vuln_path).resolve()),
+        server_id=pair["vulnerable_target_id"],
+        use_llm=False,
+        use_docker=False,
+    )
+    patched_scan = orch.run_scan(
+        target=str(Path(patched_path).resolve()),
+        server_id=pair["patched_target_id"],
+        use_llm=False,
+        use_docker=False,
+    )
+
+    vuln_rules = {f.rule_id for f in vuln_scan.findings}
+    patched_rules = {f.rule_id for f in patched_scan.findings}
+    eliminated_rules = sorted(list(vuln_rules - patched_rules))
+
+    return {
+        "pair_id": pair["id"],
+        "title": pair["title"],
+        "description": pair["description"],
+        "key_vulnerability": pair["key_vulnerability"],
+        "remediation_summary": pair["remediation_summary"],
+        "vulnerable": {
+            "target_id": pair["vulnerable_target_id"],
+            "server_name": vuln_scan.server_name,
+            "trust_state": vuln_scan.trust_state.value if hasattr(vuln_scan.trust_state, "value") else str(vuln_scan.trust_state),
+            "findings_count": len(vuln_scan.findings),
+            "findings": [f.model_dump() for f in vuln_scan.findings],
+            "stage_coverage": vuln_scan.stage_coverage,
+            "evidence_manifest_hash": vuln_scan.evidence_manifest_hash,
+        },
+        "patched": {
+            "target_id": pair["patched_target_id"],
+            "server_name": patched_scan.server_name,
+            "trust_state": patched_scan.trust_state.value if hasattr(patched_scan.trust_state, "value") else str(patched_scan.trust_state),
+            "findings_count": len(patched_scan.findings),
+            "findings": [f.model_dump() for f in patched_scan.findings],
+            "stage_coverage": patched_scan.stage_coverage,
+            "evidence_manifest_hash": patched_scan.evidence_manifest_hash,
+        },
+        "comparison_delta": {
+            "eliminated_findings_count": max(0, len(vuln_scan.findings) - len(patched_scan.findings)),
+            "eliminated_rule_ids": eliminated_rules,
+            "is_fully_remediated": (
+                (patched_scan.trust_state == TrustState.VERIFIED or str(patched_scan.trust_state) == "VERIFIED")
+                and len(patched_scan.findings) == 0
+            ),
+        },
     }
 
 

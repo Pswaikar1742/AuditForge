@@ -75,6 +75,12 @@ def compute_catalog_fingerprint(tools: Dict[str, "ToolRecord"]) -> str:
     return hashlib.sha256(combined.encode("utf-8")).hexdigest()
 
 
+def compute_composite_fingerprint(tools_fp: str, resources_fp: str = "", prompts_fp: str = "") -> str:
+    """Compute canonical composite catalog fingerprint covering tools, resources, and prompts."""
+    combined = f"tools:{tools_fp}|resources:{resources_fp}|prompts:{prompts_fp}"
+    return hashlib.sha256(combined.encode("utf-8")).hexdigest()
+
+
 class ToolRecord(BaseModel):
     """Normalized MCP tool record with cryptographic fingerprint."""
     model_config = ConfigDict(extra="ignore")
@@ -119,13 +125,28 @@ class ServerSnapshot(BaseModel):
     tools_fingerprint: str = Field(default="", description="Tools catalog SHA-256 hash")
     resources_fingerprint: str = Field(default="", description="Resources catalog SHA-256 hash")
     prompts_fingerprint: str = Field(default="", description="Prompts catalog SHA-256 hash")
+    catalog_fingerprint_v1: str = Field(default="", description="Tool-only fingerprint (v1 backwards compatible)")
+    catalog_fingerprint_v2: str = Field(default="", description="Composite surface fingerprint (tools+resources+prompts)")
+    fingerprint_version: str = Field(default="v2", description="Catalog fingerprint version (v1 or v2)")
     catalog_fingerprint: str = Field(default="", description="Combined catalog SHA-256 hash")
 
     def model_post_init(self, __context: Any) -> None:
         if not self.tools_fingerprint and self.tools:
             self.tools_fingerprint = compute_catalog_fingerprint(self.tools)
-        if not self.catalog_fingerprint and self.tools:
-            self.catalog_fingerprint = self.tools_fingerprint or compute_catalog_fingerprint(self.tools)
+        if not self.resources_fingerprint and self.resources:
+            self.resources_fingerprint = hashlib.sha256(canonical_json(self.resources).encode("utf-8")).hexdigest()
+        if not self.prompts_fingerprint and self.prompts:
+            self.prompts_fingerprint = hashlib.sha256(canonical_json(self.prompts).encode("utf-8")).hexdigest()
+        if not self.catalog_fingerprint_v1 and self.tools_fingerprint:
+            self.catalog_fingerprint_v1 = self.tools_fingerprint
+        if not self.catalog_fingerprint_v2 and self.tools_fingerprint:
+            self.catalog_fingerprint_v2 = compute_composite_fingerprint(
+                self.tools_fingerprint,
+                self.resources_fingerprint or "",
+                self.prompts_fingerprint or "",
+            )
+        if not self.catalog_fingerprint:
+            self.catalog_fingerprint = self.catalog_fingerprint_v1 or self.tools_fingerprint
 
 
 class EvidenceRecord(BaseModel):
@@ -209,6 +230,7 @@ class ScanResult(BaseModel):
     diff: Optional[CatalogDiff] = Field(default=None, description="Catalog diff against baseline if available")
     findings: List[Finding] = Field(default_factory=list, description="All verified findings")
     evidence: List[EvidenceRecord] = Field(default_factory=list, description="Verifiable evidence capsules")
+    evidence_manifest_hash: Optional[str] = Field(default=None, description="SHA-256 cryptographic manifest seal over all evidence records")
     probe_outcomes: List[ProbeOutcome] = Field(default_factory=list, description="Dynamic probe results")
     stage_coverage: Dict[str, str] = Field(default_factory=dict, description="Stage outcomes: PASS, ERROR, SKIPPED, UNKNOWN")
     scan_mode: str = Field(default="LIVE_SCAN", description="Audit modality: LIVE_SCAN or SNAPSHOT_ANALYSIS")
